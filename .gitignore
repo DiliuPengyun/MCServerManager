@@ -1,0 +1,11 @@
+# 构建输出
+build/
+
+# Xmake 缓存
+.xmake/
+
+# 工具缓存
+.cache/
+
+# OpenCode 运行时（保留配置文件）
+.opencode/node_modules/
