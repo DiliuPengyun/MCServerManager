@@ -1,7 +1,10 @@
 add_rules("mode.debug", "mode.release")
 
-add_requires("ftxui")
+-- 锁定 v6.1.9：ftxui v7 将 ComponentBase::children_ 改为私有，代码暂不兼容
+add_requires("ftxui v6.1.9")
 add_requires("nlohmann_json")
+
+set_version("0.2")
 
 target("MCServerManager")
     set_kind("binary")
