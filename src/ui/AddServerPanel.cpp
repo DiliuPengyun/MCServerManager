@@ -278,7 +278,11 @@ void AddServerPanel::finish_wizard() {
     sc.max_memory_mb = utils::safe_stoi(max_mem_, 4096);
 
     if (method_ == AddMethod::IMPORT_DIRECTORY) {
-        std::string dir = std::filesystem::absolute(import_dir_path_).string();
+        // 规范化导入路径（解析符号链接、去掉尾部分隔符与相对成分），
+        // 保证重连时与 tmux 汇报的 pane 路径一致
+        std::error_code ec;
+        std::filesystem::path canonical_dir = std::filesystem::weakly_canonical(import_dir_path_, ec);
+        std::string dir = (ec ? std::filesystem::absolute(import_dir_path_) : canonical_dir).string();
         sc.server_jar_path = detection_result_.server_jar_path;
         sc.working_dir = dir;
         sc.backup_dir = (std::filesystem::path(dir) / "backups").string();

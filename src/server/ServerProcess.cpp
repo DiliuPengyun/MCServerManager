@@ -7,6 +7,25 @@
 
 namespace mc_manager::server {
 
+namespace {
+
+// 规范化路径用于比较：去掉尾部分隔符，解析符号链接与 ./.. 成分，
+// 避免同一目录因写法不同（尾斜杠、软链、相对成分）被误判为不同目录
+std::string normalize_path_for_compare(const std::string &path) {
+    std::string trimmed = path;
+    while (trimmed.size() > 1 && trimmed.back() == '/') {
+        trimmed.pop_back();
+    }
+    std::error_code ec;
+    std::filesystem::path p = std::filesystem::weakly_canonical(std::filesystem::path(trimmed), ec);
+    if (ec) {
+        p = std::filesystem::path(trimmed).lexically_normal();
+    }
+    return p.string();
+}
+
+} // namespace
+
 ServerProcess::ServerProcess() = default;
 
 ServerProcess::~ServerProcess() {
@@ -141,7 +160,8 @@ bool ServerProcess::attach(size_t index, const std::string &server_name, const s
 
     if (!working_dir.empty()) {
         std::string pane_path = TmuxSession::get_pane_current_path(session_name_);
-        if (!pane_path.empty() && pane_path != working_dir) {
+        if (!pane_path.empty() &&
+            normalize_path_for_compare(pane_path) != normalize_path_for_compare(working_dir)) {
             TmuxSession::kill_session(session_name_);
             session_name_.clear();
             return false;
