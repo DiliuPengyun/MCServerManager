@@ -42,7 +42,7 @@ std::string AppConfig::get_effective_servers_parent_folder() const {
     return (std::filesystem::path(utils::get_exe_dir()) / servers_parent_folder).string();
 }
 
-std::string AppConfig::config_file_path() {
+std::string AppConfig::config_dir_path() {
     const char *xdg_config = std::getenv("XDG_CONFIG_HOME");
     std::string config_dir;
     if (xdg_config && xdg_config[0] != '\0') {
@@ -52,15 +52,19 @@ std::string AppConfig::config_file_path() {
         if (home && home[0] != '\0') {
             config_dir = std::string(home) + "/.config/MCServerManager";
         } else {
-            return "config.json";
+            return ".";
         }
     }
     try {
         std::filesystem::create_directories(config_dir);
     } catch (const std::filesystem::filesystem_error &) {
-        return "config.json";
+        return ".";
     }
-    return config_dir + "/config.json";
+    return config_dir;
+}
+
+std::string AppConfig::config_file_path() {
+    return config_dir_path() + "/config.json";
 }
 
 ServerConfig ServerConfig::from_json(const nlohmann::json& sj) {
@@ -124,6 +128,8 @@ bool AppConfig::load() {
             servers_parent_folder = j.value("servers_parent_folder", "");
             global_java_path = j.value("global_java_path", std::string{DEFAULT_JAVA_PATH});
             active_server_index = j.value("active_server_index", static_cast<size_t>(0));
+            web_port = j.value("web_port", 8080);
+            web_token = j.value("web_token", "");
 
             for (const auto &sj : j["servers"]) {
                 servers.push_back(ServerConfig::from_json(sj));
@@ -145,6 +151,8 @@ bool AppConfig::save() const {
         j["servers_parent_folder"] = servers_parent_folder;
         j["global_java_path"] = global_java_path;
         j["active_server_index"] = active_server_index;
+        j["web_port"] = web_port;
+        j["web_token"] = web_token;
 
         auto servers_array = nlohmann::json::array();
         for (const auto &s : servers) {

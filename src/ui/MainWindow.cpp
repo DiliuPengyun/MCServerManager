@@ -5,9 +5,6 @@
 #include "ftxui/component/component.hpp"
 #include "ftxui/component/event.hpp"
 #include "ftxui/component/screen_interactive.hpp"
-#include "utils/StringUtils.h"
-#include "server/EulaChecker.h"
-#include <filesystem>
 #include <thread>
 
 using namespace ftxui;
@@ -64,15 +61,11 @@ Component Modal(Component main, Component modal, bool &show) {
 
 } // namespace
 
-MainWindow::MainWindow() = default;
+MainWindow::MainWindow() : app_config_(manager_.config()) {}
 MainWindow::~MainWindow() = default;
 
 void MainWindow::init() {
-    app_config_.load();
-
-    for (size_t i = 0; i < app_config_.servers.size(); ++i) {
-        init_server_process(i);
-    }
+    manager_.load();
 
     if (!app_config_.servers.empty() && app_config_.active_server_index < app_config_.servers.size()) {
         auto idx = app_config_.active_server_index;
@@ -85,51 +78,10 @@ void MainWindow::init() {
     refresh_server_list_entries();
 }
 
-void MainWindow::init_server_process(size_t index) {
-    auto &proc = server_processes_[index];
-    console_buffers_[index];
-
-    proc.set_output_callback(
-        [this, index](const std::string &line) {
-            console_buffers_[index].push_line(line);
-
-            if (line.find("players online:") != std::string::npos) {
-                size_t colon_pos = line.find(':');
-                if (colon_pos != std::string::npos) {
-                    std::string names_str = line.substr(colon_pos + 1);
-                    names_str = utils::trim(names_str);
-
-                    if (!names_str.empty()) {
-                        auto names = utils::split(names_str, ',');
-                        std::vector<std::string> players;
-                        for (const auto &name : names) {
-                            std::string trimmed = utils::trim(name);
-                            if (!trimmed.empty()) {
-                                players.push_back(trimmed);
-                            }
-                        }
-                        std::lock_guard<std::mutex> lock(players_mutexes_[index]);
-                        players_lists_[index] = std::move(players);
-                    }
-                }
-            }
-        }
-    );
-
-    auto &sc = app_config_.servers[index];
-    proc.attach(index, sc.name, sc.working_dir);
-}
-
 void MainWindow::refresh_server_list_entries() {
     server_list_entries_.clear();
     for (size_t i = 0; i < app_config_.servers.size(); ++i) {
-        auto state = server::ServerState::STOPPED;
-        auto it = server_processes_.find(i);
-        if (it != server_processes_.end()) {
-            state = it->second.state();
-        }
-
-        auto disp = get_state_display(state);
+        auto disp = get_state_display(manager_.state(i));
 
         server_list_entries_.push_back(
             std::string(disp.indicator) + " " + app_config_.servers[i].name +
@@ -146,9 +98,7 @@ void MainWindow::setup_dashboard_callbacks(ScreenInteractive &screen) {
     dashboard_panel_.set_stop_callback([this, &screen]() {
         size_t idx = app_config_.active_server_index;
         std::thread([this, idx, &screen]() {
-            if (server_processes_.count(idx) > 0) {
-                server_processes_[idx].stop();
-            }
+            manager_.stop_server(idx);
             screen.PostEvent(Event::Custom);
         }).detach();
     });
@@ -283,16 +233,10 @@ ftxui::Component MainWindow::GetComponent(ScreenInteractive &screen) {
         if (idx >= app_config_.servers.size()) idx = 0;
 
         auto &sc = app_config_.servers[idx];
-        auto *proc = (server_processes_.count(idx) > 0)
-                         ? &server_processes_[idx] : nullptr;
-        auto *buf = (console_buffers_.count(idx) > 0)
-                        ? &console_buffers_[idx] : nullptr;
+        auto *proc = manager_.process(idx);
+        auto *buf = manager_.console(idx);
 
-        std::vector<std::string> players;
-        {
-            std::lock_guard<std::mutex> lock(players_mutexes_[idx]);
-            players = players_lists_[idx];
-        }
+        std::vector<std::string> players = manager_.players(idx);
 
         int bk_count = backup_panel_.backup_count();
 
@@ -345,9 +289,7 @@ ftxui::Component MainWindow::GetComponent(ScreenInteractive &screen) {
     auto server_config_component = server_panel_.GetComponent(
         app_config_,
         [this](size_t idx) -> server::ServerState {
-            auto it = server_processes_.find(idx);
-            if (it != server_processes_.end()) return it->second.state();
-            return server::ServerState::STOPPED;
+            return manager_.state(idx);
         },
         [this, &screen]() {
             app_config_.save();
@@ -362,10 +304,8 @@ ftxui::Component MainWindow::GetComponent(ScreenInteractive &screen) {
 
     auto agree_btn = Button("同意 EULA 并启动", [this, &screen] {
         if (eula_pending_server_index_ < app_config_.servers.size()) {
-            auto &sc = app_config_.servers[eula_pending_server_index_];
-            server::agree_eula(sc.working_dir);
             show_eula_popup_ = false;
-            start_server(eula_pending_server_index_);
+            manager_.agree_eula_and_start(eula_pending_server_index_);
             screen.PostEvent(Event::Custom);
         }
     });
@@ -431,18 +371,7 @@ ftxui::Component MainWindow::GetComponent(ScreenInteractive &screen) {
 }
 
 void MainWindow::add_server_from_config(const config::ServerConfig &sc) {
-    app_config_.servers.push_back(sc);
-    app_config_.active_server_index = app_config_.servers.size() - 1;
-
-    std::string parent_folder = app_config_.servers_parent_folder;
-    if (parent_folder.empty()) {
-        parent_folder = app_config_.get_effective_servers_parent_folder();
-        std::filesystem::create_directories(parent_folder);
-        app_config_.servers_parent_folder = parent_folder;
-    }
-
-    app_config_.save();
-    init_server_process(app_config_.active_server_index);
+    manager_.add_server(sc);
     on_server_switched();
 }
 
@@ -451,53 +380,8 @@ void MainWindow::delete_server(size_t index) {
 
     show_server_config_popup_ = false;
 
-    if (server_processes_.count(index) > 0 && server_processes_[index].is_running()) {
-        server_processes_[index].stop();
-    }
+    manager_.delete_server(index);
 
-    server_processes_.erase(index);
-    console_buffers_.erase(index);
-    players_mutexes_.erase(index);
-    players_lists_.erase(index);
-
-    auto rekey_map = [&]<typename Map>(Map &m) {
-        std::vector<typename Map::node_type> nodes;
-        for (auto it = m.begin(); it != m.end(); ) {
-            if (it->first > index) {
-                auto node = m.extract(it++);
-                node.key() = node.key() - 1;
-                nodes.push_back(std::move(node));
-            } else {
-                ++it;
-            }
-        }
-        for (auto &node : nodes) {
-            m.insert(std::move(node));
-        }
-    };
-
-    rekey_map(server_processes_);
-    rekey_map(console_buffers_);
-    rekey_map(players_mutexes_);
-    rekey_map(players_lists_);
-
-    // 物理删除磁盘上的服务器文件
-    {
-        auto &sc = app_config_.servers[index];
-        if (!sc.working_dir.empty()) {
-            try {
-                std::filesystem::remove_all(sc.working_dir);
-            } catch (const std::filesystem::filesystem_error &) {
-                // 忽略错误 - 服务器目录可能不存在
-            }
-        }
-    }
-
-    app_config_.servers.erase(app_config_.servers.begin() + index);
-    if (app_config_.active_server_index >= app_config_.servers.size()) {
-        app_config_.active_server_index = app_config_.servers.empty() ? 0 : app_config_.servers.size() - 1;
-    }
-    app_config_.save();
     refresh_server_list_entries();
     on_server_switched();
     content_needs_rebuild_ = true;
@@ -506,42 +390,18 @@ void MainWindow::delete_server(size_t index) {
 void MainWindow::start_server(size_t index) {
     if (index >= app_config_.servers.size()) return;
 
-    auto &sc = app_config_.servers[index];
-
-    if (!sc.working_dir.empty() && !server::check_eula(sc.working_dir)) {
+    if (manager_.start_server(index) == core::StartResult::EULA_REQUIRED) {
         eula_pending_server_index_ = index;
         show_eula_popup_ = true;
-        return;
     }
-
-    if (server_processes_.count(index) == 0) {
-        init_server_process(index);
-    }
-
-    auto config = server::build_launch_config(
-        sc.core_type,
-        sc.java_path,
-        sc.server_jar_path,
-        sc.min_memory_mb,
-        sc.max_memory_mb,
-        sc.additional_jvm_args,
-        sc.launch_args_file,
-        sc.working_dir);
-
-    server_processes_[index].start(config, index);
 }
 
 void MainWindow::stop_server(size_t index) {
-    if (server_processes_.count(index) > 0) {
-        server_processes_[index].stop();
-    }
+    manager_.stop_server(index);
 }
 
 void MainWindow::restart_server(size_t index) {
-    if (server_processes_.count(index) > 0) {
-        server_processes_[index].stop();
-        start_server(index);
-    }
+    manager_.restart_server(index);
 }
 
 void MainWindow::apply_server_properties_path(size_t idx) {
@@ -565,10 +425,7 @@ void MainWindow::on_server_switched() {
 }
 
 void MainWindow::shutdown() {
-    for (auto &[idx, proc] : server_processes_) {
-        proc.detach();
-    }
-    app_config_.save();
+    manager_.shutdown();
 }
 
 } // namespace mc_manager::ui

@@ -1,12 +1,9 @@
 #pragma once
 
-#include <map>
-#include <mutex>
 #include <vector>
 #include <string>
+#include "../core/ServerManager.h"
 #include "../config/AppConfig.h"
-#include "../server/ConsoleBuffer.h"
-#include "../server/ServerProcess.h"
 #include "DashboardPanel.h"
 #include "ConsolePanel.h"
 #include "PlayerPanel.h"
@@ -33,13 +30,10 @@ public:
 private:
     enum class SidebarTab { DASHBOARD, SETTINGS };
 
-    config::AppConfig app_config_;
+    // 服务器运行态全部在控制层；app_config_ 是 manager_ 配置的引用
+    core::ServerManager manager_;
+    config::AppConfig &app_config_;
     SidebarTab sidebar_tab_{SidebarTab::DASHBOARD};
-
-    std::map<size_t, server::ServerProcess> server_processes_;
-    std::map<size_t, server::ConsoleBuffer> console_buffers_;
-    std::map<size_t, std::mutex> players_mutexes_;
-    std::map<size_t, std::vector<std::string>> players_lists_;
 
     DashboardPanel dashboard_panel_;
     ConsolePanel console_panel_;
@@ -68,7 +62,6 @@ private:
     bool hover_add_btn_{false};
     bool show_server_list_{true};
 
-    void init_server_process(size_t index);
     void add_server_from_config(const config::ServerConfig &sc);
     void delete_server(size_t index);
     void start_server(size_t index);

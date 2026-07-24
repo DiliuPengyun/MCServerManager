@@ -44,6 +44,13 @@ public:
     std::vector<ServerConfig> servers;
     size_t active_server_index{0};
 
+    // Web UI 设置（MCServerManager web 模式）
+    int web_port{8080};
+    std::string web_token;  // 首次启动 web 模式时自动生成
+
+    // 配置文件所在目录（web.log / web.pid 等也放在这里）
+    static std::string config_dir_path();
+
 private:
     static std::string config_file_path();
     static std::string find_system_java();
