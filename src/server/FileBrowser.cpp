@@ -191,6 +191,44 @@ bool FileBrowser::create_file(const std::string &rel, std::string &err) const {
     return true;
 }
 
+bool FileBrowser::upload_file(const std::string &rel, const std::string &content,
+                              bool overwrite, std::string &err) const {
+    auto file = resolve(rel);
+    if (!file) {
+        err = "路径无效或越出服务器目录";
+        return false;
+    }
+    if (!is_valid_entry_name(file->filename().string())) {
+        err = "文件名无效";
+        return false;
+    }
+    std::error_code ec;
+    if (std::filesystem::exists(*file, ec)) {
+        if (!overwrite) {
+            err = "同名文件或目录已存在";
+            return false;
+        }
+        if (!std::filesystem::is_regular_file(*file, ec)) {
+            err = "目标是目录，不能覆盖写入";
+            return false;
+        }
+    } else if (!std::filesystem::is_directory(file->parent_path(), ec)) {
+        err = "父目录不存在";
+        return false;
+    }
+    std::ofstream ofs(*file, std::ios::binary | std::ios::trunc);
+    if (!ofs.is_open()) {
+        err = "写入文件失败";
+        return false;
+    }
+    ofs.write(content.data(), static_cast<std::streamsize>(content.size()));
+    if (!ofs.good()) {
+        err = "写入文件失败";
+        return false;
+    }
+    return true;
+}
+
 bool FileBrowser::create_dir(const std::string &rel, std::string &err) const {
     auto dir = resolve(rel);
     if (!dir) {

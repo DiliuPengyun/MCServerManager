@@ -99,6 +99,7 @@ struct WebServer::Impl {
         if (message == "文件名无效" || message == "目录名无效" || message == "名称无效")
             return reply("invalid_name", 400);
         if (message.find("已存在") != std::string::npos) return reply("already_exists", 409);
+        if (message == "目标是目录，不能覆盖写入") return reply("invalid_path", 400);
         if (message == "目标不存在" || message.rfind("目标不是", 0) == 0)
             return reply("not_found", 404);
         return reply("io_error", 500);
@@ -876,6 +877,31 @@ struct WebServer::Impl {
             std::string err;
             if (!browser.rename(body["path"].get<std::string>(),
                                 body["new_name"].get<std::string>(), err)) {
+                file_error_reply(res, err);
+                return;
+            }
+            json_reply(res, {{"ok", true}});
+        });
+
+        // 上传文件：请求体为文件原始内容，path 为含文件名的相对路径，
+        // 带 overwrite=1 时允许覆盖已存在文件；单文件上限 256 MiB
+        svr.Post(R"(/api/servers/(\d+)/files/upload)", [this](const httplib::Request &req, httplib::Response &res) {
+            std::lock_guard<std::mutex> lock(api_mutex);
+            size_t idx;
+            if (!valid_index(req, res, idx)) return;
+            if (!req.has_param("path")) {
+                json_reply(res, {{"error", "bad_request"}}, 400);
+                return;
+            }
+            static constexpr size_t MAX_UPLOAD_BYTES = 256ull * 1024 * 1024;
+            if (req.body.size() > MAX_UPLOAD_BYTES) {
+                json_reply(res, {{"error", "too_large"}, {"message", "文件超过 256 MiB 上传上限"}}, 413);
+                return;
+            }
+            server::FileBrowser browser(manager.config().servers[idx].working_dir);
+            std::string err;
+            if (!browser.upload_file(req.get_param_value("path"), req.body,
+                                     req.has_param("overwrite"), err)) {
                 file_error_reply(res, err);
                 return;
             }

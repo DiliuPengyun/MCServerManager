@@ -294,6 +294,15 @@ select option { background: var(--panel); }
   white-space: pre; overflow-wrap: normal; overflow-x: auto;
 }
 #files-editor textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(91,155,213,.18); outline: none; }
+#files-drop-mask {
+  position: fixed; inset: 0; z-index: 90; display: none;
+  align-items: center; justify-content: center;
+  background: rgba(20, 22, 27, .82); pointer-events: none;
+}
+#files-drop-mask .drop-hint {
+  padding: 28px 44px; border: 2px dashed var(--accent); border-radius: 12px;
+  color: var(--accent); font-size: 15px;
+}
 
 /* ---------- 表单 ---------- */
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 13px 16px; }
@@ -564,6 +573,8 @@ select option { background: var(--panel); }
             <div class="props-add">
               <button class="btn" id="files-new-file">新建文件</button>
               <button class="btn" id="files-new-dir">新建文件夹</button>
+              <button class="btn" id="files-upload">上传文件</button>
+              <input type="file" id="files-upload-input" multiple style="display:none">
             </div>
           </div>
           <div id="files-editor" style="display:none">
@@ -577,6 +588,7 @@ select option { background: var(--panel); }
             <textarea id="files-text" spellcheck="false"></textarea>
           </div>
         </div>
+        <div id="files-drop-mask"><div class="drop-hint">松开鼠标，上传文件到当前目录</div></div>
       </section>
 
       <section id="tab-settings" class="panel">
@@ -773,6 +785,7 @@ let filesPath = '';        // 文件页当前相对路径（'' 为根目录）
 let filesEntries = [];
 let fileEditing = null;    // 正在编辑的文件相对路径，null 表示未编辑
 let fileModalAction = null;// 文件弹窗当前动作 { title, label, value, onOk }
+let fileDragDepth = 0;     // 文件页拖拽进入/离开的嵌套计数
 let eulaIdx = -1;
 let rconIdx = -1;
 let rconPendingAction = 'start';
@@ -1628,6 +1641,59 @@ async function deleteEntry(entry) {
   await loadFiles();
 }
 
+/* ---- 文件上传（按钮选择 / 拖拽均可，多文件逐个上传） ---- */
+function uploadOne(rel, file, overwrite) {
+  return api('/api/servers/' + current + '/files/upload?path=' + encodeURIComponent(rel) +
+    (overwrite ? '&overwrite=1' : ''), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body: file
+  });
+}
+
+async function uploadFiles(fileList) {
+  if (current < 0) return;
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+  const MAX_SIZE = 256 * 1024 * 1024;
+  let okCount = 0;
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    if (!f.name) continue;
+    if (f.size > MAX_SIZE) {
+      toast('「' + f.name + '」超过 256 MiB 上限，已跳过', 'error');
+      continue;
+    }
+    setInlineMsg('files-msg', 'warn',
+      '正在上传 ' + (i + 1) + '/' + files.length + ': ' + f.name + ' (' + fmtSize(f.size) + ')…');
+    const rel = joinRel(filesPath, f.name);
+    try {
+      await uploadOne(rel, f, false);
+      okCount++;
+    } catch (e) {
+      if (e.status === 409) {
+        if (confirm('「' + f.name + '」已存在，覆盖吗？')) {
+          try {
+            await uploadOne(rel, f, true);
+            okCount++;
+          } catch (e2) {
+            toast('上传失败: ' + f.name + ' - ' + fileErrMsg(e2), 'error');
+          }
+        }
+      } else {
+        toast('上传失败: ' + f.name + ' - ' + fileErrMsg(e), 'error');
+      }
+    }
+  }
+  setInlineMsg('files-msg', '', '');
+  toast('上传完成: ' + okCount + '/' + files.length + ' 个文件', okCount === files.length ? 'success' : 'info');
+  await loadFiles();
+}
+
+function showFileDropMask(show) {
+  $('files-drop-mask').style.display = show ? 'flex' : 'none';
+}
+
 /* ================= 服务器设置 / 删除 ================= */
 function fillServerForm() {
   const s = servers[current];
@@ -2251,6 +2317,31 @@ function bindStaticEvents() {
   $('file-modal-ok').addEventListener('click', confirmFileModal);
   $('file-modal-input').addEventListener('keydown', e => {
     if (e.key === 'Enter') confirmFileModal();
+  });
+  // 文件上传：按钮选择 + 拖拽到文件页
+  $('files-upload').addEventListener('click', () => $('files-upload-input').click());
+  $('files-upload-input').addEventListener('change', () => {
+    uploadFiles($('files-upload-input').files);
+    $('files-upload-input').value = '';
+  });
+  const filesZone = $('tab-files');
+  filesZone.addEventListener('dragenter', e => {
+    e.preventDefault();
+    fileDragDepth++;
+    showFileDropMask(true);
+  });
+  filesZone.addEventListener('dragover', e => e.preventDefault());
+  filesZone.addEventListener('dragleave', () => {
+    if (--fileDragDepth <= 0) {
+      fileDragDepth = 0;
+      showFileDropMask(false);
+    }
+  });
+  filesZone.addEventListener('drop', e => {
+    e.preventDefault();
+    fileDragDepth = 0;
+    showFileDropMask(false);
+    uploadFiles(e.dataTransfer.files);
   });
   $('sv-save').addEventListener('click', saveServerConfig);
   $('sv-delete').addEventListener('click', deleteServer);

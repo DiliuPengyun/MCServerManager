@@ -35,6 +35,10 @@ public:
     bool write_text(const std::string &rel, const std::string &content, std::string &err) const;
     // 新建空文件（父目录必须已存在，目标不得已存在）
     bool create_file(const std::string &rel, std::string &err) const;
+    // 上传文件：以二进制写入（允许二进制内容）；目标已存在时须 overwrite 为真，
+    // 目录不能被覆盖
+    bool upload_file(const std::string &rel, const std::string &content, bool overwrite,
+                     std::string &err) const;
     // 新建目录（父目录必须已存在，目标不得已存在）
     bool create_dir(const std::string &rel, std::string &err) const;
     // 重命名（new_name 为纯文件名，不得含路径分隔符）
