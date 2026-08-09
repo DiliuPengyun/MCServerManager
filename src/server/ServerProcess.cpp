@@ -24,6 +24,46 @@ std::string normalize_path_for_compare(const std::string &path) {
     return p.string();
 }
 
+// 服务器在 tmux 伪终端中运行时，jline 控制台会向输出写入 ANSI 转义序列：
+// 行首的提示符重绘段（ESC[m> 提示符\rESC[K）与日志配色（ESC[32m 等，可出现
+// 在行中任意位置）。这些字节随 console.log 进入界面后显示为乱码，按行分发前剥离。
+std::string sanitize_console_line(const std::string &line) {
+    std::string result = line;
+
+    // 1) 去掉行首连续的 jline 提示符重绘段
+    const std::string redraw_prefix = "\x1b[m> ";
+    const std::string redraw_suffix = "\x1b[K";
+    while (result.compare(0, redraw_prefix.size(), redraw_prefix) == 0) {
+        size_t end = result.find(redraw_suffix, redraw_prefix.size());
+        if (end == std::string::npos) break;
+        result.erase(0, end + redraw_suffix.size());
+    }
+
+    // 2) 剥离剩余的 CSI 转义序列与回车符
+    std::string clean;
+    clean.reserve(result.size());
+    for (size_t i = 0; i < result.size();) {
+        char c = result[i];
+        if (c == '\x1b' && i + 1 < result.size() && result[i + 1] == '[') {
+            size_t j = i + 2;
+            // CSI 序列以 0x40-0x7E 范围内的字节结束，限制长度防止畸形序列吞掉整行
+            while (j < result.size() && j - i < 32 &&
+                   !(result[j] >= 0x40 && result[j] <= 0x7e)) {
+                ++j;
+            }
+            i = (j < result.size()) ? j + 1 : result.size();
+            continue;
+        }
+        if (c == '\r' || c == '\x1b') {
+            ++i;
+            continue;
+        }
+        clean += c;
+        ++i;
+    }
+    return clean;
+}
+
 } // namespace
 
 ServerProcess::ServerProcess() = default;
@@ -210,6 +250,10 @@ void ServerProcess::send_command(const std::string &command) {
     if (state_ != ServerState::RUNNING && state_ != ServerState::STARTING) return;
 
     TmuxSession::send_keys(session_name_, command);
+    // 伪终端里服务器的输入回显不会进入 console.log，这里手动回显到控制台
+    if (output_callback_) {
+        output_callback_("> " + command);
+    }
 }
 
 ServerState ServerProcess::state() const {
@@ -310,7 +354,10 @@ void ServerProcess::dispatch_lines(const std::string& chunk, std::string& line_b
             line_buffer.pop_back();
         }
         if (on_line && !line_buffer.empty()) {
-            on_line(line_buffer);
+            std::string clean = sanitize_console_line(line_buffer);
+            if (!clean.empty()) {
+                on_line(clean);
+            }
         }
         line_buffer.clear();
         pos = newline + 1;
