@@ -280,6 +280,12 @@ select option { background: var(--panel); }
 /* ---------- 文件管理 ---------- */
 .btn-row { display: flex; gap: 8px; }
 .files-path { font-family: var(--mono); font-size: 12.5px; color: var(--text-dim); }
+/* 文件页整体为纵向 flex：路径栏与底部按钮固定，仅文件表格区域滚动 */
+#files-layout { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 18px; }
+#files-list-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.files-table-scroll { flex: 1; min-height: 0; overflow-y: auto; margin-bottom: 14px; }
+#tab-files .props-add { flex: none; }
+#files-editor { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .files-table .f-name { font-family: var(--mono); font-size: 12.5px; word-break: break-all; }
 .files-table .f-name.link { color: var(--accent); cursor: pointer; }
 .files-table .f-name.link:hover { text-decoration: underline; }
@@ -557,7 +563,7 @@ select option { background: var(--panel); }
       </section>
 
       <section id="tab-files" class="panel">
-        <div class="panel-scroll">
+        <div id="files-layout">
           <div class="inline-msg" id="files-msg"></div>
           <div id="files-list-wrap">
             <div class="panel-head">
@@ -567,8 +573,10 @@ select option { background: var(--panel); }
                 <button class="btn" id="files-refresh">刷新</button>
               </div>
             </div>
-            <div class="table-wrap">
-              <table class="kv-table files-table"><tbody id="files-tbody"></tbody></table>
+            <div class="files-table-scroll">
+              <div class="table-wrap">
+                <table class="kv-table files-table"><tbody id="files-tbody"></tbody></table>
+              </div>
             </div>
             <div class="props-add">
               <button class="btn" id="files-new-file">新建文件</button>
