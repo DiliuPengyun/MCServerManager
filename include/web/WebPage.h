@@ -277,6 +277,24 @@ select option { background: var(--panel); }
 .backup-row .bname { flex: 1; font-family: var(--mono); font-size: 12.5px; word-break: break-all; }
 .backup-row .btn { padding: 4px 13px; font-size: 12px; }
 
+/* ---------- 文件管理 ---------- */
+.btn-row { display: flex; gap: 8px; }
+.files-path { font-family: var(--mono); font-size: 12.5px; color: var(--text-dim); }
+.files-table .f-name { font-family: var(--mono); font-size: 12.5px; word-break: break-all; }
+.files-table .f-name.link { color: var(--accent); cursor: pointer; }
+.files-table .f-name.link:hover { text-decoration: underline; }
+.files-table .f-meta { color: var(--text-dim); font-size: 12px; white-space: nowrap; width: 1%; }
+.files-table .f-ops { white-space: nowrap; width: 1%; text-align: right; }
+.files-table .f-ops .btn { padding: 3px 10px; font-size: 12px; margin-left: 6px; }
+#files-editor textarea {
+  width: 100%; min-height: 48vh; resize: vertical;
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.6;
+  background: #14161b; color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
+  white-space: pre; overflow-wrap: normal; overflow-x: auto;
+}
+#files-editor textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(91,155,213,.18); outline: none; }
+
 /* ---------- 表单 ---------- */
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 13px 16px; }
 .fld { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
@@ -477,6 +495,7 @@ select option { background: var(--panel); }
         <button class="tab-btn" data-tab="players">玩家</button>
         <button class="tab-btn" data-tab="properties">配置</button>
         <button class="tab-btn" data-tab="backups">备份</button>
+        <button class="tab-btn" data-tab="files">文件</button>
         <button class="tab-btn" data-tab="settings">服务器设置</button>
       </nav>
 
@@ -526,6 +545,38 @@ select option { background: var(--panel); }
 
       <section id="tab-backups" class="panel">
         <div class="panel-scroll" id="backups-content"></div>
+      </section>
+
+      <section id="tab-files" class="panel">
+        <div class="panel-scroll">
+          <div class="inline-msg" id="files-msg"></div>
+          <div id="files-list-wrap">
+            <div class="panel-head">
+              <h3>文件 <span class="files-path" id="files-path">/</span></h3>
+              <div class="btn-row">
+                <button class="btn" id="files-up">上级</button>
+                <button class="btn" id="files-refresh">刷新</button>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table class="kv-table files-table"><tbody id="files-tbody"></tbody></table>
+            </div>
+            <div class="props-add">
+              <button class="btn" id="files-new-file">新建文件</button>
+              <button class="btn" id="files-new-dir">新建文件夹</button>
+            </div>
+          </div>
+          <div id="files-editor" style="display:none">
+            <div class="panel-head">
+              <h3>编辑 <span class="files-path" id="files-edit-name"></span></h3>
+              <div class="btn-row">
+                <button class="btn btn-primary" id="files-save">保存</button>
+                <button class="btn" id="files-close">关闭</button>
+              </div>
+            </div>
+            <textarea id="files-text" spellcheck="false"></textarea>
+          </div>
+        </div>
       </section>
 
       <section id="tab-settings" class="panel">
@@ -660,6 +711,26 @@ select option { background: var(--panel); }
   </div>
 </div>
 
+<!-- 文件操作弹窗（新建文件 / 新建文件夹 / 重命名共用） -->
+<div class="modal-mask" id="modal-file" style="display:none">
+  <div class="modal">
+    <div class="modal-head">
+      <h3 id="file-modal-title">新建文件</h3>
+      <button class="modal-x" data-close="modal-file" title="关闭">×</button>
+    </div>
+    <div class="modal-body">
+      <label class="fld"><span id="file-modal-label">名称</span>
+        <input id="file-modal-input" spellcheck="false" autocomplete="off">
+      </label>
+      <div class="inline-msg" id="file-modal-msg"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" data-close="modal-file">取消</button>
+      <button class="btn btn-primary" id="file-modal-ok">确定</button>
+    </div>
+  </div>
+</div>
+
 <script>
 'use strict';
 /* ================= 工具 ================= */
@@ -683,7 +754,7 @@ function toast(msg, type) {
 /* ================= 全局状态 ================= */
 const STATE_TEXT = { STOPPED: '已停止', STARTING: '启动中', RUNNING: '运行中', STOPPING: '停止中' };
 const STATE_CLASS = { STOPPED: 'stopped', STARTING: 'starting', RUNNING: 'running', STOPPING: 'stopping' };
-const TAB_NAMES = ['overview', 'console', 'players', 'properties', 'backups', 'settings'];
+const TAB_NAMES = ['overview', 'console', 'players', 'properties', 'backups', 'files', 'settings'];
 
 let token = '';
 let servers = [];
@@ -698,6 +769,10 @@ let propState = null;        // {exists, entries, order, dirty:Set, newKeys:Set}
 const propInputs = new Map();// key -> input 元素
 let backupsFor = -1;
 let lastBackups = [];
+let filesPath = '';        // 文件页当前相对路径（'' 为根目录）
+let filesEntries = [];
+let fileEditing = null;    // 正在编辑的文件相对路径，null 表示未编辑
+let fileModalAction = null;// 文件弹窗当前动作 { title, label, value, onOk }
 let eulaIdx = -1;
 let rconIdx = -1;
 let rconPendingAction = 'start';
@@ -889,6 +964,9 @@ async function selectServer(i) {
     propState = null;
     backupsFor = -1;
     lastBackups = [];
+    filesPath = '';
+    filesEntries = [];
+    fileEditing = null;
     fillServerForm();
   }
   renderSidebar();
@@ -912,6 +990,7 @@ async function loadTabData(tab) {
   if (tab === 'console') await loadConsole();
   else if (tab === 'properties') await loadProperties(false);
   else if (tab === 'backups') await loadBackups();
+  else if (tab === 'files') await loadFiles();
   else if (tab === 'players') renderPlayers();
   else if (tab === 'overview') renderOverview();
   else if (tab === 'settings') fillServerForm();
@@ -1324,6 +1403,229 @@ async function deleteBackup(name) {
     toast('删除失败: ' + e.message, 'error');
   }
   await loadBackups();
+}
+
+/* ================= 文件管理 ================= */
+function fmtSize(n) {
+  if (n == null) return '';
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KiB';
+  if (n < 1024 * 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + ' MiB';
+  return (n / 1024 / 1024 / 1024).toFixed(1) + ' GiB';
+}
+
+function fileErrMsg(e) {
+  return (e.data && e.data.message) ? e.data.message : e.message;
+}
+
+function joinRel(dir, name) { return dir ? dir + '/' + name : name; }
+
+async function loadFiles() {
+  if (current < 0) return;
+  const idx = current, path = filesPath;
+  try {
+    const d = await api('/api/servers/' + idx + '/files?path=' + encodeURIComponent(path));
+    if (current !== idx || filesPath !== path) return;
+    filesEntries = d.entries || [];
+    setInlineMsg('files-msg', '', '');
+  } catch (e) {
+    if (current === idx) setInlineMsg('files-msg', 'err', '目录加载失败: ' + fileErrMsg(e));
+  }
+  renderFiles();
+}
+
+function renderFiles() {
+  const editing = fileEditing !== null;
+  $('files-list-wrap').style.display = editing ? 'none' : '';
+  $('files-editor').style.display = editing ? '' : 'none';
+  if (editing) return;
+  $('files-path').textContent = '/' + (filesPath ? filesPath + '/' : '');
+  $('files-up').disabled = !filesPath;
+  const tbody = $('files-tbody');
+  tbody.innerHTML = '';
+  if (filesPath) {
+    // 「..」返回上级行
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 4;
+    td.className = 'f-name link';
+    td.textContent = '../';
+    td.addEventListener('click', navUp);
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+  }
+  if (filesEntries.length === 0) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 4;
+    td.className = 'f-meta';
+    td.textContent = '空目录';
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+  }
+  filesEntries.forEach(entry => {
+    const tr = document.createElement('tr');
+    const nameTd = document.createElement('td');
+    nameTd.className = 'f-name link';
+    nameTd.textContent = entry.is_dir ? entry.name + '/' : entry.name;
+    nameTd.addEventListener('click', () => {
+      if (entry.is_dir) navInto(entry.name); else openFile(entry.name);
+    });
+    const sizeTd = document.createElement('td');
+    sizeTd.className = 'f-meta';
+    sizeTd.textContent = entry.is_dir ? '-' : fmtSize(entry.size);
+    const timeTd = document.createElement('td');
+    timeTd.className = 'f-meta';
+    timeTd.textContent = entry.mod_time || '';
+    const opsTd = document.createElement('td');
+    opsTd.className = 'f-ops';
+    const openBtn = document.createElement('button');
+    openBtn.className = 'btn';
+    openBtn.textContent = entry.is_dir ? '打开' : '编辑';
+    openBtn.addEventListener('click', () => {
+      if (entry.is_dir) navInto(entry.name); else openFile(entry.name);
+    });
+    const renameBtn = document.createElement('button');
+    renameBtn.className = 'btn';
+    renameBtn.textContent = '重命名';
+    renameBtn.addEventListener('click', () => openRenameModal(entry.name));
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn btn-danger';
+    delBtn.textContent = '删除';
+    delBtn.addEventListener('click', () => deleteEntry(entry));
+    opsTd.appendChild(openBtn);
+    opsTd.appendChild(renameBtn);
+    opsTd.appendChild(delBtn);
+    tr.appendChild(nameTd);
+    tr.appendChild(sizeTd);
+    tr.appendChild(timeTd);
+    tr.appendChild(opsTd);
+    tbody.appendChild(tr);
+  });
+}
+
+function navInto(name) {
+  filesPath = joinRel(filesPath, name);
+  loadFiles();
+}
+
+function navUp() {
+  if (!filesPath) return;
+  const parts = filesPath.split('/');
+  parts.pop();
+  filesPath = parts.join('/');
+  loadFiles();
+}
+
+async function openFile(name) {
+  const rel = joinRel(filesPath, name);
+  try {
+    const d = await api('/api/servers/' + current + '/files/content?path=' + encodeURIComponent(rel));
+    fileEditing = rel;
+    $('files-edit-name').textContent = '/' + rel;
+    $('files-text').value = d.content || '';
+    setInlineMsg('files-msg', '', '');
+    renderFiles();
+  } catch (e) {
+    setInlineMsg('files-msg', 'err', '打开失败: ' + fileErrMsg(e));
+  }
+}
+
+async function saveFile() {
+  if (fileEditing === null) return;
+  const btn = $('files-save');
+  btn.disabled = true;
+  try {
+    await api('/api/servers/' + current + '/files/content', {
+      method: 'PUT',
+      body: JSON.stringify({ path: fileEditing, content: $('files-text').value })
+    });
+    toast('文件已保存', 'success');
+  } catch (e) {
+    toast('保存失败: ' + fileErrMsg(e), 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function closeEditor() {
+  fileEditing = null;
+  renderFiles();
+  loadFiles();
+}
+
+// 打开文件操作弹窗（新建文件 / 新建文件夹 / 重命名共用）
+function openFileModal(action) {
+  fileModalAction = action;
+  $('file-modal-title').textContent = action.title;
+  $('file-modal-label').textContent = action.label || '名称';
+  $('file-modal-input').value = action.value || '';
+  setInlineMsg('file-modal-msg', '', '');
+  openModal('modal-file');
+  setTimeout(() => $('file-modal-input').focus(), 0);
+}
+
+function openCreateModal(isDir) {
+  openFileModal({
+    title: isDir ? '新建文件夹' : '新建文件',
+    label: isDir ? '文件夹名' : '文件名',
+    onOk: async name => {
+      await api('/api/servers/' + current + '/files', {
+        method: 'POST',
+        body: JSON.stringify({ path: joinRel(filesPath, name), is_dir: isDir })
+      });
+      toast(isDir ? '文件夹已创建' : '文件已创建', 'success');
+    }
+  });
+}
+
+function openRenameModal(name) {
+  openFileModal({
+    title: '重命名「' + name + '」',
+    label: '新名称',
+    value: name,
+    onOk: async newName => {
+      await api('/api/servers/' + current + '/files/rename', {
+        method: 'PUT',
+        body: JSON.stringify({ path: joinRel(filesPath, name), new_name: newName })
+      });
+      toast('已重命名', 'success');
+    }
+  });
+}
+
+async function confirmFileModal() {
+  if (!fileModalAction) return;
+  const name = $('file-modal-input').value.trim();
+  if (!name) {
+    setInlineMsg('file-modal-msg', 'err', '名称不能为空');
+    return;
+  }
+  const btn = $('file-modal-ok');
+  btn.disabled = true;
+  try {
+    await fileModalAction.onOk(name);
+    closeModal('modal-file');
+    fileModalAction = null;
+    await loadFiles();
+  } catch (e) {
+    setInlineMsg('file-modal-msg', 'err', '操作失败: ' + fileErrMsg(e));
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function deleteEntry(entry) {
+  const what = entry.is_dir ? '文件夹（含其中全部内容）' : '文件';
+  if (!confirm('确定删除' + what + '「' + entry.name + '」吗？此操作不可恢复。')) return;
+  try {
+    await api('/api/servers/' + current + '/files?path=' +
+      encodeURIComponent(joinRel(filesPath, entry.name)), { method: 'DELETE' });
+    toast('已删除', 'success');
+  } catch (e) {
+    toast('删除失败: ' + fileErrMsg(e), 'error');
+  }
+  await loadFiles();
 }
 
 /* ================= 服务器设置 / 删除 ================= */
@@ -1940,6 +2242,16 @@ function bindStaticEvents() {
   $('players-refresh').addEventListener('click', () => refresh(true));
   $('props-save').addEventListener('click', saveProperties);
   $('prop-add-btn').addEventListener('click', addNewProp);
+  $('files-up').addEventListener('click', navUp);
+  $('files-refresh').addEventListener('click', loadFiles);
+  $('files-new-file').addEventListener('click', () => openCreateModal(false));
+  $('files-new-dir').addEventListener('click', () => openCreateModal(true));
+  $('files-save').addEventListener('click', saveFile);
+  $('files-close').addEventListener('click', closeEditor);
+  $('file-modal-ok').addEventListener('click', confirmFileModal);
+  $('file-modal-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') confirmFileModal();
+  });
   $('sv-save').addEventListener('click', saveServerConfig);
   $('sv-delete').addEventListener('click', deleteServer);
   $('set-save').addEventListener('click', saveSettings);
@@ -1961,6 +2273,7 @@ function bindStaticEvents() {
     else if ($('modal-eula').style.display === 'flex') closeModal('modal-eula');
     else if ($('modal-rcon').style.display === 'flex') closeModal('modal-rcon');
     else if ($('modal-installer').style.display === 'flex') closeInstallerModal();
+    else if ($('modal-file').style.display === 'flex') closeModal('modal-file');
   });
 }
 

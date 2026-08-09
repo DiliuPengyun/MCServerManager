@@ -9,6 +9,7 @@
 #include "PlayerPanel.h"
 #include "ConfigPanel.h"
 #include "BackupPanel.h"
+#include "FilePanel.h"
 #include "SettingsPanel.h"
 #include "AddServerPanel.h"
 #include "ServerPanel.h"
@@ -40,6 +41,7 @@ private:
     PlayerPanel player_panel_;
     ConfigPanel config_panel_;
     BackupPanel backup_panel_;
+    FilePanel file_panel_;
     SettingsPanel settings_panel_;
     AddServerPanel add_server_panel_;
     ServerPanel server_panel_;

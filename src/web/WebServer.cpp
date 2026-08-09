@@ -4,6 +4,7 @@
 #include "server/CoreType.h"
 #include "server/CoreDetector.h"
 #include "server/CoreInstaller.h"
+#include "server/FileBrowser.h"
 #include "server/VersionManifest.h"
 #include "utils/IniParser.h"
 #include "httplib.h"
@@ -85,6 +86,22 @@ struct WebServer::Impl {
     static void json_reply(httplib::Response &res, const nlohmann::json &j, int status = 200) {
         res.status = status;
         res.set_content(j.dump(), "application/json; charset=utf-8");
+    }
+
+    // 把 FileBrowser 的中文错误描述映射为 HTTP 状态码与错误码
+    static void file_error_reply(httplib::Response &res, const std::string &message) {
+        auto reply = [&](const char *code, int status) {
+            json_reply(res, {{"error", code}, {"message", message}}, status);
+        };
+        if (message == "路径无效或越出服务器目录") return reply("invalid_path", 400);
+        if (message.rfind("文件过大", 0) == 0) return reply("too_large", 400);
+        if (message == "二进制文件不支持编辑") return reply("not_text", 400);
+        if (message == "文件名无效" || message == "目录名无效" || message == "名称无效")
+            return reply("invalid_name", 400);
+        if (message.find("已存在") != std::string::npos) return reply("already_exists", 409);
+        if (message == "目标不存在" || message.rfind("目标不是", 0) == 0)
+            return reply("not_found", 404);
+        return reply("io_error", 500);
     }
 
     bool valid_index(const httplib::Request &req, httplib::Response &res, size_t &idx) {
@@ -760,6 +777,123 @@ struct WebServer::Impl {
             std::string error;
             if (!manager.delete_backup(idx, req.matches[2], error)) {
                 json_reply(res, {{"error", error}}, 409);
+                return;
+            }
+            json_reply(res, {{"ok", true}});
+        });
+
+        // ---- 文件管理 ----
+        svr.Get(R"(/api/servers/(\d+)/files)", [this](const httplib::Request &req, httplib::Response &res) {
+            std::lock_guard<std::mutex> lock(api_mutex);
+            size_t idx;
+            if (!valid_index(req, res, idx)) return;
+            server::FileBrowser browser(manager.config().servers[idx].working_dir);
+            std::string rel = req.has_param("path") ? req.get_param_value("path") : "";
+            std::vector<server::FileEntry> entries;
+            std::string err;
+            if (!browser.list(rel, entries, err)) {
+                file_error_reply(res, err);
+                return;
+            }
+            nlohmann::json items = nlohmann::json::array();
+            for (const auto &e : entries) {
+                items.push_back({{"name", e.name}, {"is_dir", e.is_dir},
+                                 {"size", e.size}, {"mod_time", e.mod_time}});
+            }
+            json_reply(res, {{"path", rel}, {"entries", items}});
+        });
+
+        svr.Get(R"(/api/servers/(\d+)/files/content)", [this](const httplib::Request &req, httplib::Response &res) {
+            std::lock_guard<std::mutex> lock(api_mutex);
+            size_t idx;
+            if (!valid_index(req, res, idx)) return;
+            if (!req.has_param("path")) {
+                json_reply(res, {{"error", "bad_request"}}, 400);
+                return;
+            }
+            std::string rel = req.get_param_value("path");
+            server::FileBrowser browser(manager.config().servers[idx].working_dir);
+            std::string content, err;
+            if (!browser.read_text(rel, content, err)) {
+                file_error_reply(res, err);
+                return;
+            }
+            json_reply(res, {{"path", rel}, {"content", content}});
+        });
+
+        svr.Put(R"(/api/servers/(\d+)/files/content)", [this](const httplib::Request &req, httplib::Response &res) {
+            std::lock_guard<std::mutex> lock(api_mutex);
+            size_t idx;
+            if (!valid_index(req, res, idx)) return;
+            auto body = nlohmann::json::parse(req.body, nullptr, false);
+            if (body.is_discarded() || !body.contains("path") || !body["path"].is_string() ||
+                !body.contains("content") || !body["content"].is_string()) {
+                json_reply(res, {{"error", "bad_request"}}, 400);
+                return;
+            }
+            server::FileBrowser browser(manager.config().servers[idx].working_dir);
+            std::string err;
+            if (!browser.write_text(body["path"].get<std::string>(),
+                                    body["content"].get<std::string>(), err)) {
+                file_error_reply(res, err);
+                return;
+            }
+            json_reply(res, {{"ok", true}});
+        });
+
+        svr.Post(R"(/api/servers/(\d+)/files)", [this](const httplib::Request &req, httplib::Response &res) {
+            std::lock_guard<std::mutex> lock(api_mutex);
+            size_t idx;
+            if (!valid_index(req, res, idx)) return;
+            auto body = nlohmann::json::parse(req.body, nullptr, false);
+            if (body.is_discarded() || !body.contains("path") || !body["path"].is_string()) {
+                json_reply(res, {{"error", "bad_request"}}, 400);
+                return;
+            }
+            bool is_dir = body.value("is_dir", false);
+            server::FileBrowser browser(manager.config().servers[idx].working_dir);
+            std::string err;
+            bool ok = is_dir ? browser.create_dir(body["path"].get<std::string>(), err)
+                             : browser.create_file(body["path"].get<std::string>(), err);
+            if (!ok) {
+                file_error_reply(res, err);
+                return;
+            }
+            json_reply(res, {{"ok", true}});
+        });
+
+        svr.Put(R"(/api/servers/(\d+)/files/rename)", [this](const httplib::Request &req, httplib::Response &res) {
+            std::lock_guard<std::mutex> lock(api_mutex);
+            size_t idx;
+            if (!valid_index(req, res, idx)) return;
+            auto body = nlohmann::json::parse(req.body, nullptr, false);
+            if (body.is_discarded() || !body.contains("path") || !body["path"].is_string() ||
+                !body.contains("new_name") || !body["new_name"].is_string()) {
+                json_reply(res, {{"error", "bad_request"}}, 400);
+                return;
+            }
+            server::FileBrowser browser(manager.config().servers[idx].working_dir);
+            std::string err;
+            if (!browser.rename(body["path"].get<std::string>(),
+                                body["new_name"].get<std::string>(), err)) {
+                file_error_reply(res, err);
+                return;
+            }
+            json_reply(res, {{"ok", true}});
+        });
+
+        svr.Delete(R"(/api/servers/(\d+)/files)", [this](const httplib::Request &req, httplib::Response &res) {
+            std::lock_guard<std::mutex> lock(api_mutex);
+            size_t idx;
+            if (!valid_index(req, res, idx)) return;
+            if (!req.has_param("path")) {
+                json_reply(res, {{"error", "bad_request"}}, 400);
+                return;
+            }
+            server::FileBrowser browser(manager.config().servers[idx].working_dir);
+            std::string err;
+            if (!browser.remove(req.get_param_value("path"), err)) {
+                file_error_reply(res, err);
                 return;
             }
             json_reply(res, {{"ok", true}});

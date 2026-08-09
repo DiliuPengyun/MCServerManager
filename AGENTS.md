@@ -14,6 +14,7 @@ MCServerManager 是一个基于 [FTXUI](https://github.com/ArthurSonzogni/FTXUI)
 - 控制台：可滚动日志输出（环形缓冲 5000 行）与指令输入
 - 玩家管理：通过 **RCON** 周期执行 `list` 获取在线玩家、踢出、封禁。启动时若服务器未启用 RCON，会弹窗询问：同意后管理器自动在 `server.properties` 写入 `enable-rcon=true` 与自动生成的 `rcon.port`/`rcon.password`（凭据副本存于 `config.json` 的 `rcon_port`/`rcon_password`）；拒绝则直接启动，玩家页灰显不可用
 - 备份 / 恢复：世界目录的带时间戳快照
+- 文件管理：浏览服务器工作目录、查看 / 编辑文本文件、新建文件 / 文件夹、重命名、删除（TUI 与 Web 均有「文件」标签页，共用 `server/FileBrowser` 操作层）
 - `server.properties` 图形化编辑器、EULA 检查与同意、向导式创建服务器
 
 注意：README 声明本项目代码 100% 由 AI 生成。
@@ -58,8 +59,8 @@ src/Application.cpp     创建 FTXUI 全屏 ScreenInteractive，开启 100ms 定
   - 启动时的 **安装器检查**（先于 EULA）：Forge/NeoForge 服务器的启动参数文件与可启动 jar 均缺失且目录中存在安装器 jar 时，`needs_installer()` 为真、`start_server` 返回 `StartResult::INSTALLER_REQUIRED`；用户同意后由 UI 层在后台线程运行安装器（`server::run_installer_jar`），成功后 `apply_installer_detection()` 更新配置，再重新走启动流程（EULA → RCON → 启动）。`append_console_line()` 用于把安装器输出注入控制台缓冲区与行监听。TUI 暂无安装引导，只在控制台写提示；Web UI 有完整流程。
   - **RCON 玩家轮询**：`load()` 启动后台线程，每 3 秒对运行中且已配置 RCON 的服务器执行 `list`（目标凭据存于 `rcon_targets_`，随删除服务器一并清理），结果缓存进 `players_lists_` 供 `players()` 读取。
 - **`web/`** —— Web UI（`MCServerManager web [端口]` 模式）：
-  - `WebServer`：基于内置 `third_party/httplib.h` 服务端的完整 REST + SSE 接口（服务器 CRUD 与启停、EULA、RCON 启用、控制台快照/SSE 流、发指令、server.properties 读写、备份增删恢复、全局设置、核心类型/版本清单、异步安装任务轮询），令牌认证（`Authorization: Bearer` 或 `?token=`），线程池限为 4；配置与容器访问由 `api_mutex` 串行化（stop 最长持锁约 30 秒）。未启用 RCON 时 `/start` 与 `/restart` 返回 409 `rcon_required`，前端弹窗选择 `POST /rcon`（启用并启动）或携带 `allow_no_rcon` 重发原动作（直接启动）；`/restart` 在停止前同步预检 RCON。整合包未安装时 `/start` 与 `/restart` 返回 409 `installer_required`，前端弹窗确认后 `POST /install` 后台运行安装器（进度写入安装任务，同时经 `append_console_line` 注入控制台 SSE），前端轮询 `/api/tasks/<id>`，成功后自动重发原启动动作（可能继续链式弹出 EULA / RCON 框）。
-  - `WebPage.h`：内嵌的功能完整单页应用（约 70 KB，原生 JS + EventSource，无外部依赖），含概览/控制台/玩家/配置/备份/服务器设置标签页与添加服务器向导、全局设置弹窗。
+  - `WebServer`：基于内置 `third_party/httplib.h` 服务端的完整 REST + SSE 接口（服务器 CRUD 与启停、EULA、RCON 启用、控制台快照/SSE 流、发指令、server.properties 读写、备份增删恢复、文件管理 `/files` 系列、全局设置、核心类型/版本清单、异步安装任务轮询），令牌认证（`Authorization: Bearer` 或 `?token=`），线程池限为 4；配置与容器访问由 `api_mutex` 串行化（stop 最长持锁约 30 秒）。未启用 RCON 时 `/start` 与 `/restart` 返回 409 `rcon_required`，前端弹窗选择 `POST /rcon`（启用并启动）或携带 `allow_no_rcon` 重发原动作（直接启动）；`/restart` 在停止前同步预检 RCON。整合包未安装时 `/start` 与 `/restart` 返回 409 `installer_required`，前端弹窗确认后 `POST /install` 后台运行安装器（进度写入安装任务，同时经 `append_console_line` 注入控制台 SSE），前端轮询 `/api/tasks/<id>`，成功后自动重发原启动动作（可能继续链式弹出 EULA / RCON 框）。文件管理路由：`GET /files?path=`（列目录）、`GET|PUT /files/content`（读/写文本）、`POST /files`（新建，`is_dir` 区分目录）、`PUT /files/rename`、`DELETE /files?path=`；业务经 `server::FileBrowser`，错误描述由 `file_error_reply` 映射为 400/404/409/500 与错误码。
+  - `WebPage.h`：内嵌的功能完整单页应用（约 70 KB，原生 JS + EventSource，无外部依赖），含概览/控制台/玩家/配置/备份/文件/服务器设置标签页与添加服务器向导、全局设置弹窗；「文件」页为目录表格 + 内嵌文本编辑器，新建/重命名经 `modal-file` 通用弹窗、删除走原生 `confirm()`（与备份页一致）。
   - `WebDaemon`：fork 守护进程——父进程通过管道确认子进程绑定端口后打印访问地址/令牌并退出（不阻塞终端）；子进程 setsid、重定向 stdio 到 `<配置目录>/web.log`、写 `web.pid`，sigwait 线程处理 SIGTERM/SIGINT 优雅退出。退出时与 TUI 一样 `detach` 而非停止服务器。**单实例限制**：httplib 在 Linux 上默认 `SO_REUSEPORT`，重复启动不会报端口占用而是多进程分摊连接，因此启动时通过 `web.pid` 检查并拒绝第二个实例。
   - 配置项：`web_port`（默认 8080）、`web_token`（首次启动自动生成 32 位十六进制），均存于 `config.json`。
 
@@ -73,11 +74,12 @@ src/Application.cpp     创建 FTXUI 全屏 ScreenInteractive，开启 100ms 定
   - `CoreDetector`：探测已有目录中的服务端核心类型与版本。优先按 `libraries/net/{neoforged,minecraftforge,fabricmc}` 目录判定；无 libraries 的整合包（未运行安装器或旧版打包）按顶层 jar 文件名中的加载器标记识别（neoforge 先于 forge 匹配），只发现安装器 jar 时判定类型但留空 jar 路径。安装器识别基于**内容**（扫描 jar 尾部 zip 中央目录中的 `minecraftforge/installer`、`fml/installer`、`neoforged/installer` 条目名），整合包把安装器改名成 `forge.jar` 也能识别；`find_installer_jar()` 与 `jar_is_installer()` 供未安装整合包定位/判定安装器。jar 兜底递归扫描跳过 `mods` 目录。
   - `EulaChecker`：检查 / 同意 `eula.txt`。
   - `RconClient`：Source RCON 协议的极简同步客户端（auth + 单命令往返），**保持长连接复用**（vanilla 会为每条 RCON 连接各打一行 starting/shutting down 日志，短连接高频轮询会刷屏），仅在断开后重建；用于玩家轮询线程向本机服务器周期发送 `list`。
+  - `FileBrowser`：服务器目录文件操作层（浏览、读写文本、新建 / 重命名 / 删除），纯 `std::filesystem` 实现（不拼 shell）。所有相对路径经 `resolve()` 做 `weakly_canonical` 前缀校验，拒绝 `..` 越界与符号链接逃逸；文本读取限 1 MiB 并拒绝二进制文件；禁止删除 / 重命名根目录本身。**TUI 的 FilePanel 与 Web 的 /files 接口共用它。**
   - `ConsoleBuffer`：带互斥锁的 5000 行环形日志缓冲。
 - **`ui/`** —— FTXUI 界面层：
   - `MainWindow`：顶层组件，侧栏含「仪表盘 / 设置」；**本身不持有服务器运行态**，通过 `core::ServerManager` 操作（`app_config_` 是 `manager_.config()` 的引用），只保留弹窗、列表选中、面板切换等纯 UI 状态。启动遇 `EULA_REQUIRED` / `RCON_REQUIRED` 时分别弹 EULA / RCON 确认框（EULA 同意后会链式弹出 RCON 框）。
-  - `DashboardPanel`：服务器详情页，子标签为 概览 / 控制台 / 玩家 / 配置 / 备份，内嵌下列各面板。
-  - `ConsolePanel`（日志滚动与命令输入）、`PlayerPanel`（在线玩家/踢出/封禁，数据来自控制层 RCON 轮询；RCON 不可用时整页灰显）、`ConfigPanel`（server.properties 编辑器）、`BackupPanel`（备份/恢复）、`SettingsPanel`（全局设置）、`AddServerPanel`（向导式创建服务器）、`ServerPanel`（单个服务器的配置编辑与删除）。
+  - `DashboardPanel`：服务器详情页，子标签为 概览 / 控制台 / 玩家 / 配置 / 备份 / 文件，内嵌下列各面板。
+  - `ConsolePanel`（日志滚动与命令输入）、`PlayerPanel`（在线玩家/踢出/封禁，数据来自控制层 RCON 轮询；RCON 不可用时整页灰显）、`ConfigPanel`（server.properties 编辑器）、`BackupPanel`（备份/恢复）、`FilePanel`（目录浏览 + 多行文本编辑 + 新建/重命名/删除，`set_root_dir` 注入工作目录，操作走 `server::FileBrowser`）、`SettingsPanel`（全局设置）、`AddServerPanel`（向导式创建服务器）、`ServerPanel`（单个服务器的配置编辑与删除）。
   - 辅助组件：`DynamicSlot`（动态切换子组件）、`UiHelpers`、`MenuHelpers`、`NavigationHelpers`（Tab 焦点导航）、`StateDisplayInfo`。
 - **`utils/`** —— 通用工具：
   - `Downloader`：httplib 封装（`http_get` / `http_get_json_parsed` / `download_file` 带进度回调）。
@@ -113,3 +115,4 @@ src/Application.cpp     创建 FTXUI 全屏 ScreenInteractive，开启 100ms 定
 - 网络下载均指向各官方 API 域名（Mojang、Paper 等）；更换下载源时需在代码中明确。
 - 配置文件存储在用户配置目录（`~/.config/MCServerManager/`），不要写入仓库目录。
 - `ServerProcess::stop()` 先发送 `stop` 命令等待最多 30 秒，超时后强制 `kill_session`——调整超时逻辑时注意数据损坏风险。
+- `FileBrowser` 直接读写服务器目录：**任何新增调用方都必须走它的 `resolve()` 校验**（`weakly_canonical` 前缀比较），不要把未校验的外部路径拼进文件操作；`remove()` 递归删除目录，调用前需有用户确认。

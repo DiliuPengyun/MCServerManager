@@ -3,6 +3,7 @@
 #include "ui/PlayerPanel.h"
 #include "ui/ConfigPanel.h"
 #include "ui/BackupPanel.h"
+#include "ui/FilePanel.h"
 #include "ui/StateDisplayInfo.h"
 #include "ui/NavigationHelpers.h"
 #include "ui/UiHelpers.h"
@@ -25,10 +26,11 @@ ftxui::Component DashboardPanel::GetComponent(
         ConsolePanel *console_panel,
         PlayerPanel *player_panel,
         ConfigPanel *config_panel,
-        BackupPanel *backup_panel) {
+        BackupPanel *backup_panel,
+        FilePanel *file_panel) {
 
     sub_tab_int_ = static_cast<int>(current_sub_tab_);
-    std::vector<std::string> tab_labels = {"概览", "控制台", "玩家", "配置编辑", "备份"};
+    std::vector<std::string> tab_labels = {"概览", "控制台", "玩家", "配置编辑", "备份", "文件"};
 
     auto tab_toggle = ftxui::Toggle(tab_labels, &sub_tab_int_);
 
@@ -139,6 +141,7 @@ ftxui::Component DashboardPanel::GetComponent(
         items.push_back(text(" 3. 在「玩家」管理在线玩家") | dim);
         items.push_back(text(" 4. 在「配置编辑」编辑 server.properties") | dim);
         items.push_back(text(" 5. 在「备份」创建和恢复世界备份") | dim);
+        items.push_back(text(" 6. 在「文件」管理服务器目录内容") | dim);
 
         return vbox(std::move(items));
     });
@@ -177,12 +180,21 @@ ftxui::Component DashboardPanel::GetComponent(
         backup_tab = make_empty_state_component("请先选择并启动一个服务器。");
     }
 
+    // ---- Files tab ----
+    ftxui::Component files_tab;
+    if (file_panel) {
+        files_tab = file_panel->GetComponent();
+    } else {
+        files_tab = make_empty_state_component("请先选择一个服务器。");
+    }
+
     auto tab_content = Container::Tab({
         overview_renderer,
         console_tab,
         players_tab,
         config_tab,
         backup_tab,
+        files_tab,
     }, &sub_tab_int_);
 
     tab_content |= CatchEvent([this](Event event) -> bool {

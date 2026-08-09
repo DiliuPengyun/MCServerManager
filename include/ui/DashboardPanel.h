@@ -15,12 +15,13 @@ class ConsolePanel;
 class PlayerPanel;
 class ConfigPanel;
 class BackupPanel;
+class FilePanel;
 
 class DashboardPanel {
 public:
     using VoidCallback = std::function<void()>;
 
-    enum class SubTab { OVERVIEW, CONSOLE, PLAYERS, CONFIG, BACKUP };
+    enum class SubTab { OVERVIEW, CONSOLE, PLAYERS, CONFIG, BACKUP, FILES };
 
     // players_provider：玩家列表实时来源（控制层 RCON 轮询的缓存）；
     // rcon_available：RCON 是否可用（玩家页灰态依据）
@@ -33,7 +34,8 @@ public:
                                    ConsolePanel *console_panel,
                                    PlayerPanel *player_panel,
                                    ConfigPanel *config_panel,
-                                   BackupPanel *backup_panel);
+                                   BackupPanel *backup_panel,
+                                   FilePanel *file_panel);
 
     void set_start_callback(VoidCallback callback) { start_callback_ = std::move(callback); }
     void set_stop_callback(VoidCallback callback) { stop_callback_ = std::move(callback); }

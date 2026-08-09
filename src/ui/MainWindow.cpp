@@ -71,6 +71,7 @@ void MainWindow::init() {
         auto idx = app_config_.active_server_index;
         backup_panel_.set_backup_dir(app_config_.servers[idx].backup_dir);
         backup_panel_.set_world_dir(app_config_.servers[idx].world_dir);
+        file_panel_.set_root_dir(app_config_.servers[idx].working_dir);
 
         apply_server_properties_path(idx);
     }
@@ -244,7 +245,7 @@ ftxui::Component MainWindow::GetComponent(ScreenInteractive &screen) {
         auto dashboard_comp = dashboard_panel_.GetComponent(
             sc, proc, buf, players_provider, rcon_avail, bk_count,
             &console_panel_, &player_panel_,
-            &config_panel_, &backup_panel_);
+            &config_panel_, &backup_panel_, &file_panel_);
 
         switch (content_tab_index_) {
             case 0: return dashboard_comp;
@@ -503,6 +504,7 @@ void MainWindow::on_server_switched() {
     auto &sc = app_config_.servers[idx];
     backup_panel_.set_backup_dir(sc.backup_dir);
     backup_panel_.set_world_dir(sc.world_dir);
+    file_panel_.set_root_dir(sc.working_dir);
 
     apply_server_properties_path(idx);
 }
