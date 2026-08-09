@@ -13,10 +13,12 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>
 #include <deque>
 #include <filesystem>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 namespace mc_manager::web {
 
@@ -935,6 +937,49 @@ struct WebServer::Impl {
                 {"global_java_path", cfg.global_java_path},
                 {"effective_java_path", cfg.get_effective_java_path()},
                 {"web_port", cfg.web_port},
+            });
+        });
+
+        // ---- 主机目录浏览（路径输入框的可视化选择器）----
+        // 只读列目录，不读取文件内容；目录优先按名称排序
+        svr.Get("/api/browse", [](const httplib::Request &req, httplib::Response &res) {
+            namespace fs = std::filesystem;
+            std::string path = req.has_param("path") ? req.get_param_value("path") : "";
+            bool show_files = req.has_param("show_files") && req.get_param_value("show_files") == "1";
+            if (path.empty()) {
+                const char *home = std::getenv("HOME");
+                path = (home && *home) ? home : "/";
+            }
+            std::error_code ec;
+            fs::path dir = fs::weakly_canonical(fs::path(path), ec);
+            if (ec || !fs::is_directory(dir, ec)) {
+                json_reply(res, {{"error", "目录不存在或不可访问"}}, 400);
+                return;
+            }
+            struct BrowseEntry { std::string name; bool is_dir; };
+            std::vector<BrowseEntry> entries;
+            for (const auto &entry : fs::directory_iterator(
+                     dir, fs::directory_options::skip_permission_denied, ec)) {
+                std::string name = entry.path().filename().string();
+                if (name.empty() || name[0] == '.') continue;  // 跳过隐藏项
+                bool is_dir = entry.is_directory(ec);
+                if (!is_dir && !show_files) continue;
+                entries.push_back({name, is_dir});
+            }
+            std::sort(entries.begin(), entries.end(), [](const BrowseEntry &a, const BrowseEntry &b) {
+                if (a.is_dir != b.is_dir) return a.is_dir > b.is_dir;
+                return a.name < b.name;
+            });
+            auto arr = nlohmann::json::array();
+            for (const auto &e : entries) {
+                arr.push_back({{"name", e.name}, {"is_dir", e.is_dir}});
+            }
+            std::string dir_str = dir.string();
+            std::string parent = dir.parent_path().string();
+            json_reply(res, {
+                {"path", dir_str},
+                {"parent", parent.empty() ? dir_str : parent},
+                {"entries", arr},
             });
         });
 

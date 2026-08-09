@@ -310,6 +310,30 @@ select option { background: var(--panel); }
   color: var(--accent); font-size: 15px;
 }
 
+/* ---------- 路径浏览弹窗 ---------- */
+#modal-browse { z-index: 110; }  /* 叠在全局设置 / 添加服务器弹窗之上 */
+.fld-path { display: flex; gap: 8px; align-items: center; }
+.fld-path input { flex: 1; min-width: 0; }
+.fld-path .btn { flex: none; }
+.browse-bar { display: flex; gap: 8px; margin-bottom: 12px; }
+.browse-bar input { flex: 1; min-width: 0; }
+.browse-bar .btn { flex: none; }
+.browse-list {
+  height: 320px; overflow-y: auto;
+  background: #14161b; border: 1px solid var(--border); border-radius: 8px;
+}
+.browse-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 12px; cursor: pointer; font-size: 13px;
+  border-bottom: 1px solid rgba(56,61,70,.4);
+}
+.browse-item:last-child { border-bottom: none; }
+.browse-item:hover { background: var(--panel-2); }
+.browse-item.selected { background: rgba(91,155,213,.18); }
+.browse-item .b-icon { flex: none; width: 18px; text-align: center; }
+.browse-item .b-name { font-family: var(--mono); font-size: 12.5px; word-break: break-all; }
+.browse-empty { padding: 26px; text-align: center; color: var(--text-dim); font-size: 12.5px; }
+
 /* ---------- 表单 ---------- */
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 13px 16px; }
 .fld { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
@@ -606,12 +630,27 @@ select option { background: var(--panel); }
             <div class="inline-msg" id="sv-msg"></div>
             <div class="form-grid">
               <label class="fld"><span>服务器名称</span><input id="sv-name" spellcheck="false"></label>
-              <label class="fld"><span>Java 路径</span><input id="sv-java" spellcheck="false"></label>
+              <label class="fld"><span>Java 路径</span>
+                <div class="fld-path">
+                  <input id="sv-java" spellcheck="false">
+                  <button class="btn" type="button" data-browse="sv-java" data-mode="file" data-title="选择 Java 可执行文件">浏览</button>
+                </div>
+              </label>
               <label class="fld"><span>最小内存 (MB)</span><input id="sv-min" type="number" min="0"></label>
               <label class="fld"><span>最大内存 (MB)</span><input id="sv-max" type="number" min="0"></label>
               <label class="fld span2"><span>JVM 附加参数</span><input id="sv-jvm" spellcheck="false"></label>
-              <label class="fld span2"><span>备份目录</span><input id="sv-backup" spellcheck="false"></label>
-              <label class="fld span2"><span>世界目录</span><input id="sv-world" spellcheck="false"></label>
+              <label class="fld span2"><span>备份目录</span>
+                <div class="fld-path">
+                  <input id="sv-backup" spellcheck="false">
+                  <button class="btn" type="button" data-browse="sv-backup" data-mode="dir" data-title="选择备份目录">浏览</button>
+                </div>
+              </label>
+              <label class="fld span2"><span>世界目录</span>
+                <div class="fld-path">
+                  <input id="sv-world" spellcheck="false">
+                  <button class="btn" type="button" data-browse="sv-world" data-mode="dir" data-title="选择世界目录">浏览</button>
+                </div>
+              </label>
             </div>
             <div class="form-actions">
               <button class="btn btn-primary" id="sv-save">保存设置</button>
@@ -651,12 +690,18 @@ select option { background: var(--panel); }
       <div class="inline-msg" id="set-msg"></div>
       <label class="fld">
         <span>服务器存放目录</span>
-        <input id="set-folder" spellcheck="false">
+        <div class="fld-path">
+          <input id="set-folder" spellcheck="false">
+          <button class="btn" type="button" data-browse="set-folder" data-mode="dir" data-title="选择服务器存放目录">浏览</button>
+        </div>
         <small id="set-folder-hint"></small>
       </label>
       <label class="fld">
         <span>全局 Java 路径</span>
-        <input id="set-java" spellcheck="false">
+        <div class="fld-path">
+          <input id="set-java" spellcheck="false">
+          <button class="btn" type="button" data-browse="set-java" data-mode="file" data-title="选择 Java 可执行文件">浏览</button>
+        </div>
         <small id="set-java-hint"></small>
       </label>
       <label class="fld">
@@ -751,6 +796,30 @@ select option { background: var(--panel); }
   </div>
 </div>
 
+<!-- 路径浏览弹窗（路径输入框的可视化选择器） -->
+<div class="modal-mask" id="modal-browse" style="display:none">
+  <div class="modal modal-lg">
+    <div class="modal-head">
+      <h3 id="browse-title">选择路径</h3>
+      <button class="modal-x" data-close="modal-browse" title="关闭">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="browse-bar">
+        <input id="browse-path" spellcheck="false" placeholder="输入路径后回车跳转">
+        <button class="btn" id="browse-up" type="button">上级</button>
+        <button class="btn" id="browse-go" type="button">跳转</button>
+      </div>
+      <div class="browse-list" id="browse-list"></div>
+      <div class="inline-msg" id="browse-msg" style="margin-top:12px"></div>
+    </div>
+    <div class="modal-foot">
+      <span class="foot-note" id="browse-selected"></span>
+      <button class="btn" data-close="modal-browse">取消</button>
+      <button class="btn btn-primary" id="browse-ok">确定</button>
+    </div>
+  </div>
+</div>
+
 <script>
 'use strict';
 /* ================= 工具 ================= */
@@ -801,6 +870,7 @@ let installerIdx = -1;
 let installerPendingAction = 'start';
 let installerTask = null;    // { id, timer, logShown, running }
 let wiz = null;              // 添加服务器向导状态
+let browseState = null;      // 路径浏览弹窗状态 { mode, path, parent, selected, onOk }
 
 /* ================= API ================= */
 async function api(path, opts) {
@@ -1943,6 +2013,84 @@ function closeModal(id) {
   if (m.style.display !== 'none') { m.style.display = 'none'; modalDepth = Math.max(0, modalDepth - 1); }
 }
 
+/* ================= 路径浏览弹窗 ================= */
+function openBrowse(mode, initialPath, title, onOk) {
+  browseState = { mode, path: '', parent: '', selected: '', onOk };
+  $('browse-title').textContent = title || (mode === 'dir' ? '选择目录' : '选择文件');
+  $('browse-ok').textContent = mode === 'dir' ? '选择当前目录' : '选择';
+  // 初始目录：文件模式取输入路径的父目录，目录模式取其自身
+  let start = (initialPath || '').trim();
+  if (start && mode === 'file' && !start.endsWith('/')) {
+    const i = start.lastIndexOf('/');
+    start = i > 0 ? start.slice(0, i) : '/';
+  }
+  openModal('modal-browse');
+  loadBrowse(start, true);
+}
+
+async function loadBrowse(path, isInitial) {
+  const msg = $('browse-msg');
+  msg.className = 'inline-msg'; msg.textContent = '';
+  try {
+    const d = await api('/api/browse?path=' + encodeURIComponent(path || '') +
+                        '&show_files=' + (browseState.mode === 'file' ? '1' : '0'));
+    browseState.path = d.path;
+    browseState.parent = d.parent;
+    browseState.selected = '';
+    $('browse-selected').textContent = '';
+    $('browse-path').value = d.path;
+    $('browse-up').disabled = (d.path === d.parent);
+    const list = $('browse-list');
+    if (!d.entries.length) {
+      list.innerHTML = '<div class="browse-empty">（空目录）</div>';
+    } else {
+      list.innerHTML = d.entries.map(e =>
+        '<div class="browse-item" data-name="' + esc(e.name) + '" data-dir="' + (e.is_dir ? 1 : 0) + '">' +
+        '<span class="b-icon">' + (e.is_dir ? '📁' : '📄') + '</span>' +
+        '<span class="b-name">' + esc(e.name) + '</span></div>').join('');
+      list.querySelectorAll('.browse-item').forEach(el => {
+        el.addEventListener('click', () => {
+          if (el.getAttribute('data-dir') === '1') {
+            loadBrowse(joinBrowsePath(browseState.path, el.getAttribute('data-name')));
+          } else {
+            list.querySelectorAll('.browse-item.selected').forEach(x => x.classList.remove('selected'));
+            el.classList.add('selected');
+            browseState.selected = el.getAttribute('data-name');
+            $('browse-selected').textContent = '已选择：' + browseState.selected;
+          }
+        });
+        el.addEventListener('dblclick', () => {
+          if (el.getAttribute('data-dir') !== '1') {
+            browseState.selected = el.getAttribute('data-name');
+            confirmBrowse();
+          }
+        });
+      });
+    }
+  } catch (e) {
+    if (isInitial && path) { loadBrowse('', true); return; }  // 初始路径无效时回退到家目录
+    msg.className = 'inline-msg err';
+    msg.textContent = e.message || '目录加载失败';
+  }
+}
+
+function joinBrowsePath(dir, name) {
+  return dir.replace(/\/+$/, '') + '/' + name;
+}
+
+function confirmBrowse() {
+  if (!browseState) return;
+  let p = browseState.path;
+  if (browseState.mode === 'file') {
+    if (!browseState.selected) { toast('请先选择一个文件', 'warn'); return; }
+    p = joinBrowsePath(p, browseState.selected);
+  }
+  const cb = browseState.onOk;
+  closeModal('modal-browse');
+  browseState = null;
+  if (cb) cb(p);
+}
+
 /* ================= 添加服务器向导 ================= */
 const WIZ_METHODS = [
   { id: 'auto', title: '自动安装', desc: '从官方源查询版本并下载安装服务端核心（Vanilla / Paper / Forge / NeoForge / Fabric）' },
@@ -2047,15 +2195,19 @@ function renderWizStep2(body, foot, dots) {
          (wiz.versionsLoading ? '<small>正在查询版本列表，可能需要几秒钟…</small>' : '') + '</label>';
   } else {
     h += '<label class="fld"><span>' + esc(PATH_LABELS[wiz.method]) + '</span>' +
+         '<div class="fld-path">' +
          '<input id="wz-path" spellcheck="false" value="' + esc(wiz.path) + '" placeholder="' +
-         (wiz.method === 'import' ? '/path/to/server 目录' : '/path/to/file.jar') + '"></label>';
+         (wiz.method === 'import' ? '/path/to/server 目录' : '/path/to/file.jar') + '">' +
+         '<button class="btn" type="button" id="wz-path-browse">浏览</button></div></label>';
   }
   h += '<label class="fld"><span>服务器名称</span><input id="wz-name" spellcheck="false" value="' + esc(wiz.name) + '" placeholder="例如 survival-1.20.1"></label>';
   h += '<div class="fld-row">' +
        '<label class="fld"><span>最小内存 (MB)</span><input id="wz-min" type="number" min="0" value="' + esc(String(wiz.min)) + '"></label>' +
        '<label class="fld"><span>最大内存 (MB)</span><input id="wz-max" type="number" min="0" value="' + esc(String(wiz.max)) + '"></label>' +
        '</div>';
-  h += '<label class="fld"><span>Java 路径</span><input id="wz-java" spellcheck="false" value="' + esc(wiz.java) + '" placeholder="java"></label>';
+  h += '<label class="fld"><span>Java 路径</span><div class="fld-path">' +
+       '<input id="wz-java" spellcheck="false" value="' + esc(wiz.java) + '" placeholder="java">' +
+       '<button class="btn" type="button" id="wz-java-browse">浏览</button></div></label>';
   h += '<label class="fld"><span>JVM 附加参数</span><input id="wz-jvm" spellcheck="false" value="' + esc(wiz.jvm) + '" placeholder="可留空，例如 -XX:+UseG1GC"></label>';
   body.innerHTML = h;
 
@@ -2066,6 +2218,20 @@ function renderWizStep2(body, foot, dots) {
   bind('wz-min', e => { wiz.min = e.target.value; });
   bind('wz-max', e => { wiz.max = e.target.value; });
   bind('wz-jvm', e => { wiz.jvm = e.target.value; });
+  const wpBtn = $('wz-path-browse');
+  if (wpBtn) wpBtn.addEventListener('click', () => {
+    openBrowse(wiz.method === 'import' ? 'dir' : 'file', $('wz-path').value,
+               PATH_LABELS[wiz.method], p => {
+      $('wz-path').value = p;
+      $('wz-path').dispatchEvent(new Event('input'));
+    });
+  });
+  $('wz-java-browse').addEventListener('click', () => {
+    openBrowse('file', $('wz-java').value, '选择 Java 可执行文件', p => {
+      $('wz-java').value = p;
+      $('wz-java').dispatchEvent(new Event('input'));
+    });
+  });
   const coreSel = $('wz-core');
   if (coreSel) coreSel.addEventListener('change', e => {
     wiz.core = e.target.value;
@@ -2363,11 +2529,30 @@ function bindStaticEvents() {
   $('add-x').addEventListener('click', closeAddModal);
   document.querySelectorAll('[data-close]').forEach(b =>
     b.addEventListener('click', () => closeModal(b.getAttribute('data-close'))));
+  // 路径输入框的「浏览」按钮
+  document.querySelectorAll('[data-browse]').forEach(b =>
+    b.addEventListener('click', () => {
+      const input = $(b.getAttribute('data-browse'));
+      openBrowse(b.getAttribute('data-mode') || 'file',
+                 input ? input.value : '', b.getAttribute('data-title'), p => {
+        if (input) {
+          input.value = p;
+          input.dispatchEvent(new Event('input'));
+        }
+      });
+    }));
+  $('browse-up').addEventListener('click', () => { if (browseState) loadBrowse(browseState.parent); });
+  $('browse-go').addEventListener('click', () => { if (browseState) loadBrowse($('browse-path').value.trim()); });
+  $('browse-path').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && browseState) loadBrowse($('browse-path').value.trim());
+  });
+  $('browse-ok').addEventListener('click', confirmBrowse);
   // 弹窗只允许通过 叉号 / 取消按钮 / Esc 关闭；点击遮罩层不关闭，
   // 避免误点或「按住拖出窗口外松开」导致已填写内容丢失。
   document.addEventListener('keydown', e => {
     if (e.key !== 'Escape') return;
-    if ($('modal-add').style.display === 'flex') closeAddModal();
+    if ($('modal-browse').style.display === 'flex') closeModal('modal-browse');
+    else if ($('modal-add').style.display === 'flex') closeAddModal();
     else if ($('modal-settings').style.display === 'flex') closeModal('modal-settings');
     else if ($('modal-eula').style.display === 'flex') closeModal('modal-eula');
     else if ($('modal-rcon').style.display === 'flex') closeModal('modal-rcon');
