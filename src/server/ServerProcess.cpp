@@ -25,41 +25,73 @@ std::string normalize_path_for_compare(const std::string &path) {
 }
 
 // 服务器在 tmux 伪终端中运行时，jline 控制台会向输出写入 ANSI 转义序列：
-// 行首的提示符重绘段（ESC[m> 提示符\rESC[K）与日志配色（ESC[32m 等，可出现
-// 在行中任意位置）。这些字节随 console.log 进入界面后显示为乱码，按行分发前剥离。
+// 行首的提示符重绘段（ESC[m> 提示符\rESC[K）、终端模式切换序列（ESC[?2004h、
+// ESC>、ESC= 等）与日志配色（ESC[32m 等，可出现在行中任意位置）。这些字节随
+// console.log 进入界面后显示为乱码，按行分发前剥离。
+
+// 若 s[i] 是一条完整转义序列的起点，将 next 置为序列末尾的下一位置并返回 true
+bool skip_escape_sequence(const std::string &s, size_t i, size_t &next) {
+    if (s[i] != '\x1b' || i + 1 >= s.size()) return false;
+    if (s[i + 1] == '[') {
+        // CSI 序列：参数/中间字节后以 0x40-0x7E 字节结束；
+        // 中途遇到下一个 ESC 说明序列被截断（畸形序列），到此为止且 ESC 留给下轮处理
+        size_t j = i + 2;
+        while (j < s.size() && j - i < 32 && s[j] != '\x1b' &&
+               !(s[j] >= 0x40 && s[j] <= 0x7e)) {
+            ++j;
+        }
+        next = (j < s.size() && s[j] != '\x1b') ? j + 1 : j;
+        return true;
+    }
+    // 其他序列：ESC + 中间字节(0x20-0x2F)* + 结束字节(0x30-0x7E)，如 ESC>、ESC=、ESC(B
+    size_t j = i + 1;
+    while (j < s.size() && s[j] >= 0x20 && s[j] <= 0x2f) {
+        ++j;
+    }
+    if (j < s.size() && s[j] >= 0x30 && s[j] <= 0x7e) {
+        next = j + 1;
+        return true;
+    }
+    return false;
+}
+
 std::string sanitize_console_line(const std::string &line) {
     std::string result = line;
 
-    // 1) 去掉行首连续的 jline 提示符重绘段
-    const std::string redraw_prefix = "\x1b[m> ";
-    const std::string redraw_suffix = "\x1b[K";
-    while (result.compare(0, redraw_prefix.size(), redraw_prefix) == 0) {
-        size_t end = result.find(redraw_suffix, redraw_prefix.size());
-        if (end == std::string::npos) break;
-        result.erase(0, end + redraw_suffix.size());
+    // 1) 循环剥离行首的转义序列与提示符重绘段（> 输入内容\rESC[K）。
+    // 注意接受指令时的回显行（ESC[m> 指令\r）不以 ESC[K 结尾，不属于重绘段，
+    // 经第 2 步清理后保留为 "> 指令" 作为指令回显。
+    const std::string redraw_tail = "\r\x1b[K";
+    for (;;) {
+        size_t pos = 0, next = 0;
+        while (pos < result.size() && skip_escape_sequence(result, pos, next)) {
+            pos = next;
+        }
+        size_t erase_len = pos;
+        if (result.compare(pos, 2, "> ") == 0) {
+            size_t tail = result.find(redraw_tail, pos + 2);
+            if (tail != std::string::npos) {
+                erase_len = tail + redraw_tail.size();
+            }
+        }
+        if (erase_len == 0) break;
+        result.erase(0, erase_len);
     }
 
-    // 2) 剥离剩余的 CSI 转义序列与回车符
+    // 2) 剥离行内剩余的转义序列与回车符
     std::string clean;
     clean.reserve(result.size());
     for (size_t i = 0; i < result.size();) {
-        char c = result[i];
-        if (c == '\x1b' && i + 1 < result.size() && result[i + 1] == '[') {
-            size_t j = i + 2;
-            // CSI 序列以 0x40-0x7E 范围内的字节结束，限制长度防止畸形序列吞掉整行
-            while (j < result.size() && j - i < 32 &&
-                   !(result[j] >= 0x40 && result[j] <= 0x7e)) {
-                ++j;
-            }
-            i = (j < result.size()) ? j + 1 : result.size();
+        size_t next = 0;
+        if (skip_escape_sequence(result, i, next)) {
+            i = next;
             continue;
         }
-        if (c == '\r' || c == '\x1b') {
+        if (result[i] == '\r' || result[i] == '\x1b') {
             ++i;
             continue;
         }
-        clean += c;
-        ++i;
+        clean += result[i++];
     }
     return clean;
 }
@@ -249,11 +281,9 @@ void ServerProcess::send_command(const std::string &command) {
     if (session_name_.empty()) return;
     if (state_ != ServerState::RUNNING && state_ != ServerState::STARTING) return;
 
+    // 指令回显依赖服务器控制台自身（jline 接受输入时会输出 "\x1b[m> 指令"），
+    // 经 sanitize_console_line() 清理后在控制台显示为 "> 指令"，无需手动回显
     TmuxSession::send_keys(session_name_, command);
-    // 伪终端里服务器的输入回显不会进入 console.log，这里手动回显到控制台
-    if (output_callback_) {
-        output_callback_("> " + command);
-    }
 }
 
 ServerState ServerProcess::state() const {

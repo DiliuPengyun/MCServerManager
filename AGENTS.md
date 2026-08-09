@@ -66,7 +66,7 @@ src/Application.cpp     创建 FTXUI 全屏 ScreenInteractive，开启 100ms 定
 
 - **`config/`** —— `AppConfig` / `ServerConfig`：JSON 配置读写。配置文件路径为 `$XDG_CONFIG_HOME/MCServerManager/config.json`（无 XDG 时为 `~/.config/MCServerManager/config.json`）。管理全局 Java 路径、服务器存放父目录（默认 `<可执行文件目录>/server`）、服务器列表与当前选中项。
 - **`server/`** —— 服务器进程与核心管理：
-  - `ServerProcess`：核心类。拼接 Java 启动命令，在 tmux 会话中运行并把输出 `tee` 到 `<working_dir>/.mcsm/console.log`；后台线程尾随该日志文件并按行分发给回调。按行分发前经 `sanitize_console_line()` 剥离 jline 在伪终端中产生的 ANSI 转义序列（行首提示符重绘段 `\x1b[m> …\r\x1b[K` 与行内任意位置的配色序列），否则界面显示乱码；服务器的输入回显不会进入 console.log，因此 `send_command` 发送后手动向控制台回显一行 `> 指令`。支持 `attach()` 重连已存在的会话。tmux 会话名格式为 `mcsm_<index>_<净化后的目录名>`。
+  - `ServerProcess`：核心类。拼接 Java 启动命令，在 tmux 会话中运行并把输出 `tee` 到 `<working_dir>/.mcsm/console.log`；后台线程尾随该日志文件并按行分发给回调。按行分发前经 `sanitize_console_line()` 剥离 jline 在伪终端中产生的 ANSI 转义序列（行首提示符重绘段 `\x1b[m> …\r\x1b[K`、终端模式序列 `\x1b[?2004h`/`\x1b=`/`\x1b>` 等、行内任意位置的配色序列），否则界面显示乱码；指令回显依赖 jline 接受输入时输出的 `\x1b[m> 指令\r`，清理后自然显示为 `> 指令`——不要额外手动回显，否则会显示两遍。支持 `attach()` 重连已存在的会话。tmux 会话名格式为 `mcsm_<index>_<净化后的目录名>`。
   - `TmuxSession`：全部为静态方法，封装 tmux 命令（创建/销毁会话、send_keys、写启动脚本等）。
   - `LaunchConfig`：按核心类型构建 JVM 参数；Forge/NeoForge 使用 launch args 文件而非 `-jar`。
   - `CoreType`：`CoreType` 枚举与 `CORE_TYPES` 常量表（id、显示名、是否用安装器）。
