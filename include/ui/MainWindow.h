@@ -48,6 +48,9 @@ private:
     bool show_server_config_popup_{false};
     bool show_eula_popup_{false};
     size_t eula_pending_server_index_{0};
+    bool show_rcon_popup_{false};
+    size_t rcon_pending_server_index_{0};
+    std::string rcon_error_msg_;
 
     int add_core_type_index_{0};
     std::vector<std::string> core_type_names_;

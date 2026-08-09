@@ -60,6 +60,8 @@ struct WebServer::Impl {
     std::mutex tasks_mutex;
     std::map<size_t, std::shared_ptr<InstallTask>> tasks;
     size_t next_task_id{1};
+    // 服务器下标 -> 安装任务 id（/install 防重与续接用）
+    std::map<size_t, size_t> server_install_tasks;
 
     // SSE 连接的逐连接行队列
     struct LineQueue {
@@ -112,6 +114,7 @@ struct WebServer::Impl {
             {"backup_dir", sc.backup_dir},
             {"world_dir", sc.world_dir},
             {"state", state_to_string(manager.state(i))},
+            {"rcon", manager.rcon_available(i)},
             {"players", manager.players(i)},
         };
     }
@@ -449,24 +452,110 @@ struct WebServer::Impl {
         });
 
         // ---- 启停控制 ----
-        svr.Post(R"(/api/servers/(\d+)/start)", [this](const httplib::Request &req, httplib::Response &res) {
+        // 从请求体解析 allow_no_rcon（用户拒绝启用 RCON 后直启/直重启用）
+        auto wants_skip_rcon = [](const httplib::Request &req) {
+            auto body = nlohmann::json::parse(req.body, nullptr, false);
+            return !body.is_discarded() && body.value("allow_no_rcon", false);
+        };
+        auto reply_start_result = [](httplib::Response &res, core::StartResult result) {
+            switch (result) {
+                case core::StartResult::STARTED:           json_reply(res, {{"ok", true}}); break;
+                case core::StartResult::ALREADY_RUNNING:   json_reply(res, {{"ok", true}, {"note", "already_running"}}); break;
+                case core::StartResult::EULA_REQUIRED:     json_reply(res, {{"error", "eula_required"}}, 409); break;
+                case core::StartResult::RCON_REQUIRED:     json_reply(res, {{"error", "rcon_required"}}, 409); break;
+                case core::StartResult::RCON_WRITE_FAILED: json_reply(res, {{"error", "rcon_write_failed"}}, 500); break;
+                case core::StartResult::INSTALLER_REQUIRED: json_reply(res, {{"error", "installer_required"}}, 409); break;
+                default:                                   json_reply(res, {{"error", "invalid_index"}}, 404); break;
+            }
+        };
+
+        svr.Post(R"(/api/servers/(\d+)/start)", [this, wants_skip_rcon, reply_start_result](const httplib::Request &req, httplib::Response &res) {
             std::lock_guard<std::mutex> lock(api_mutex);
             size_t idx;
             if (!valid_index(req, res, idx)) return;
-            switch (manager.start_server(idx)) {
-                case core::StartResult::STARTED:         json_reply(res, {{"ok", true}}); break;
-                case core::StartResult::ALREADY_RUNNING: json_reply(res, {{"ok", true}, {"note", "already_running"}}); break;
-                case core::StartResult::EULA_REQUIRED:   json_reply(res, {{"error", "eula_required"}}, 409); break;
-                default:                                 json_reply(res, {{"error", "invalid_index"}}, 404); break;
-            }
+            reply_start_result(res, manager.start_server(idx, wants_skip_rcon(req)));
         });
 
-        svr.Post(R"(/api/servers/(\d+)/eula)", [this](const httplib::Request &req, httplib::Response &res) {
+        svr.Post(R"(/api/servers/(\d+)/eula)", [this, reply_start_result](const httplib::Request &req, httplib::Response &res) {
             std::lock_guard<std::mutex> lock(api_mutex);
             size_t idx;
             if (!valid_index(req, res, idx)) return;
-            auto result = manager.agree_eula_and_start(idx);
-            json_reply(res, {{"ok", result == core::StartResult::STARTED || result == core::StartResult::ALREADY_RUNNING}});
+            reply_start_result(res, manager.agree_eula_and_start(idx));
+        });
+
+        // 用户同意启用 RCON：写入 server.properties 并启动（已运行则仅写入，重启后生效）
+        svr.Post(R"(/api/servers/(\d+)/rcon)", [this, reply_start_result](const httplib::Request &req, httplib::Response &res) {
+            std::lock_guard<std::mutex> lock(api_mutex);
+            size_t idx;
+            if (!valid_index(req, res, idx)) return;
+            reply_start_result(res, manager.enable_rcon_and_start(idx));
+        });
+
+        // 用户同意运行安装器：后台线程执行（可能耗时数分钟），前端轮询
+        // /api/tasks/<id> 获取进度；安装输出同时注入控制台缓冲区（SSE 实时可见）
+        svr.Post(R"(/api/servers/(\d+)/install)", [this](const httplib::Request &req, httplib::Response &res) {
+            size_t idx;
+            {
+                std::lock_guard<std::mutex> lock(api_mutex);
+                if (!valid_index(req, res, idx)) return;
+                if (!manager.needs_installer(idx)) {
+                    json_reply(res, {{"error", "installer_not_required"}}, 409);
+                    return;
+                }
+            }
+            auto task = std::make_shared<InstallTask>();
+            size_t task_id;
+            {
+                std::lock_guard<std::mutex> lock(tasks_mutex);
+                // 同一服务器已有安装任务在进行时直接复用，前端重开弹窗可续接进度
+                auto it = server_install_tasks.find(idx);
+                if (it != server_install_tasks.end()) {
+                    auto tit = tasks.find(it->second);
+                    if (tit != tasks.end()) {
+                        std::lock_guard<std::mutex> plock(tit->second->mutex);
+                        if (tit->second->status == "running") {
+                            json_reply(res, {{"ok", true}, {"task_id", it->second}, {"note", "already_installing"}});
+                            return;
+                        }
+                    }
+                }
+                task_id = next_task_id++;
+                tasks[task_id] = task;
+                server_install_tasks[idx] = task_id;
+            }
+            task_log(task, "开始运行安装器（可能需要数分钟）…");
+            std::thread([this, idx, task] {
+                // 持锁快照安装所需配置，避免安装期间与配置写操作竞争
+                std::string installer, dir, java;
+                {
+                    std::lock_guard<std::mutex> lock(api_mutex);
+                    const auto &sc = manager.config().servers[idx];
+                    dir = sc.working_dir;
+                    java = sc.java_path.empty() ? "java" : sc.java_path;
+                    installer = server::find_installer_jar(dir);
+                }
+                auto progress = [this, idx, task](const std::string &line) {
+                    task_log(task, line);
+                    manager.append_console_line(idx, line);
+                };
+                server::InstallResult result;
+                if (installer.empty()) {
+                    result.error = "未在服务器目录中找到安装器 jar";
+                } else {
+                    result = server::run_installer_jar(installer, dir, java, progress);
+                }
+                // 配置更新需与其他 API 请求串行化
+                std::lock_guard<std::mutex> lock(api_mutex);
+                std::lock_guard<std::mutex> tlock(task->mutex);
+                if (result.success) {
+                    manager.apply_installer_detection(idx, result.detection);
+                    task->status = "done";
+                } else {
+                    task->error = result.error;
+                    task->status = "error";
+                }
+            }).detach();
+            json_reply(res, {{"ok", true}, {"task_id", task_id}});
         });
 
         // stop / restart 可能阻塞数十秒（等待服务器退出），放到后台线程执行
@@ -483,15 +572,27 @@ struct WebServer::Impl {
             json_reply(res, {{"ok", true}});
         });
 
-        svr.Post(R"(/api/servers/(\d+)/restart)", [this](const httplib::Request &req, httplib::Response &res) {
+        svr.Post(R"(/api/servers/(\d+)/restart)", [this, wants_skip_rcon](const httplib::Request &req, httplib::Response &res) {
+            bool skip_rcon = wants_skip_rcon(req);
             size_t idx;
             {
                 std::lock_guard<std::mutex> lock(api_mutex);
                 if (!valid_index(req, res, idx)) return;
+                // 整合包未安装时同步拦截，由安装弹窗决定后续动作
+                if (manager.needs_installer(idx)) {
+                    json_reply(res, {{"error", "installer_required"}}, 409);
+                    return;
+                }
+                // 停止前同步预检 RCON（后台线程无法把结果带给客户端）：
+                // 未启用且未明确跳过时直接 409，由弹窗决定后续动作
+                if (!skip_rcon && !manager.rcon_available(idx)) {
+                    json_reply(res, {{"error", "rcon_required"}}, 409);
+                    return;
+                }
             }
             std::thread([this, idx] {
                 std::lock_guard<std::mutex> lock(api_mutex);
-                manager.restart_server(idx);
+                manager.restart_server(idx, true);
             }).detach();
             json_reply(res, {{"ok", true}});
         });

@@ -22,10 +22,13 @@ public:
 
     enum class SubTab { OVERVIEW, CONSOLE, PLAYERS, CONFIG, BACKUP };
 
+    // players_provider：玩家列表实时来源（控制层 RCON 轮询的缓存）；
+    // rcon_available：RCON 是否可用（玩家页灰态依据）
     ftxui::Component GetComponent(config::ServerConfig &server_config,
                                    server::ServerProcess *process,
                                    server::ConsoleBuffer *buffer,
-                                   const std::vector<std::string> &players,
+                                   std::function<std::vector<std::string>()> players_provider,
+                                   bool rcon_available,
                                    int backup_count,
                                    ConsolePanel *console_panel,
                                    PlayerPanel *player_panel,

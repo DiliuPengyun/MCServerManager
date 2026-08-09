@@ -1,23 +1,52 @@
 #include "core/ServerManager.h"
 #include "server/EulaChecker.h"
 #include "server/LaunchConfig.h"
+#include "server/RconClient.h"
 #include "utils/StringUtils.h"
+#include "utils/IniParser.h"
 #include <filesystem>
+#include <fstream>
 #include <chrono>
 #include <ctime>
 #include <sstream>
 #include <iomanip>
+#include <string_view>
 
 namespace mc_manager::core {
+
+namespace {
+
+// 生成 32 位十六进制 RCON 密码
+std::string generate_rcon_password() {
+    unsigned char buf[16] = {0};
+    std::ifstream urandom("/dev/urandom", std::ios::binary);
+    urandom.read(reinterpret_cast<char *>(buf), sizeof(buf));
+    static const char hex[] = "0123456789abcdef";
+    std::string password;
+    password.reserve(sizeof(buf) * 2);
+    for (unsigned char b : buf) {
+        password += hex[b >> 4];
+        password += hex[b & 0x0f];
+    }
+    return password;
+}
+
+} // namespace
+
+ServerManager::~ServerManager() {
+    stop_rcon_poller();
+}
 
 void ServerManager::load() {
     app_config_.load();
     for (size_t i = 0; i < app_config_.servers.size(); ++i) {
         init_server_process(i);
     }
+    start_rcon_poller();
 }
 
 void ServerManager::shutdown() {
+    stop_rcon_poller();
     for (auto &[idx, proc] : server_processes_) {
         proc.detach();
     }
@@ -28,36 +57,22 @@ void ServerManager::init_server_process(size_t index) {
     auto &proc = server_processes_[index];
     console_buffers_[index];
 
+    // 控制台输出只进缓冲区与行监听；玩家列表改由 RCON 轮询获取
     proc.set_output_callback(
         [this, index](const std::string &line) {
             console_buffers_[index].push_line(line);
-
-            if (line.find("players online:") != std::string::npos) {
-                size_t colon_pos = line.find(':');
-                if (colon_pos != std::string::npos) {
-                    std::string names_str = line.substr(colon_pos + 1);
-                    names_str = utils::trim(names_str);
-
-                    if (!names_str.empty()) {
-                        auto names = utils::split(names_str, ',');
-                        std::vector<std::string> players;
-                        for (const auto &name : names) {
-                            std::string trimmed = utils::trim(name);
-                            if (!trimmed.empty()) {
-                                players.push_back(trimmed);
-                            }
-                        }
-                        std::lock_guard<std::mutex> lock(players_mutexes_[index]);
-                        players_lists_[index] = std::move(players);
-                    }
-                }
-            }
-
             notify_line_listeners(index, line);
         }
     );
 
+    // 配置中已有 RCON 凭据的服务器直接登记为轮询目标
+    // （覆盖 attach 重连已运行服务器的场景）
     auto &sc = app_config_.servers[index];
+    if (sc.rcon_port > 0 && !sc.rcon_password.empty()) {
+        std::lock_guard<std::mutex> lock(rcon_mutex_);
+        rcon_targets_[index] = {sc.rcon_port, sc.rcon_password};
+    }
+
     proc.attach(index, sc.name, sc.working_dir);
 }
 
@@ -89,10 +104,48 @@ std::vector<std::string> ServerManager::players(size_t index) {
     return players_lists_[index];
 }
 
-StartResult ServerManager::start_server(size_t index) {
+bool ServerManager::rcon_available(size_t index) {
+    std::lock_guard<std::mutex> lock(rcon_mutex_);
+    return rcon_targets_.count(index) > 0;
+}
+
+bool ServerManager::sync_rcon_from_properties(size_t index) {
+    auto &sc = app_config_.servers[index];
+    std::string path = sc.working_dir.empty()
+        ? "server.properties" : sc.working_dir + "/server.properties";
+
+    utils::IniParser parser;
+    if (!parser.load(path)) return false;
+    if (parser.get("enable-rcon", "false") != "true") return false;
+
+    std::string password = parser.get("rcon.password", "");
+    if (password.empty()) return false;
+
+    int port = 25575;
+    try { port = std::stoi(parser.get("rcon.port", "25575")); } catch (...) {}
+
+    if (sc.rcon_port != port || sc.rcon_password != password) {
+        sc.rcon_port = port;
+        sc.rcon_password = password;
+        app_config_.save();
+    }
+    {
+        std::lock_guard<std::mutex> lock(rcon_mutex_);
+        rcon_targets_[index] = {port, password};
+    }
+    return true;
+}
+
+StartResult ServerManager::start_server(size_t index, bool allow_no_rcon) {
     if (index >= app_config_.servers.size()) return StartResult::INVALID_INDEX;
 
     auto &sc = app_config_.servers[index];
+
+    // 整合包尚未安装时优先要求运行安装器（此时连 eula.txt / server.properties
+    // 都还不存在，EULA 与 RCON 检查要等安装完成后的启动流程再进行）
+    if (needs_installer(index)) {
+        return StartResult::INSTALLER_REQUIRED;
+    }
 
     if (!sc.working_dir.empty() && !server::check_eula(sc.working_dir)) {
         return StartResult::EULA_REQUIRED;
@@ -107,6 +160,10 @@ StartResult ServerManager::start_server(size_t index) {
         return StartResult::ALREADY_RUNNING;
     }
 
+    if (!allow_no_rcon && !sync_rcon_from_properties(index)) {
+        return StartResult::RCON_REQUIRED;
+    }
+
     auto config = server::build_launch_config(
         sc.core_type,
         sc.java_path,
@@ -117,6 +174,9 @@ StartResult ServerManager::start_server(size_t index) {
         sc.launch_args_file,
         sc.working_dir);
 
+    // console.log 在 start() 中被截断，内存缓冲区同步清空，
+    // 避免控制台残留上一次会话的输出
+    console_buffers_[index].clear();
     proc.start(config, index);
     return StartResult::STARTED;
 }
@@ -127,15 +187,71 @@ StartResult ServerManager::agree_eula_and_start(size_t index) {
     return start_server(index);
 }
 
+// 用户同意后由管理器自行启用 RCON：写入 server.properties 并保存凭据副本
+StartResult ServerManager::enable_rcon_and_start(size_t index) {
+    if (index >= app_config_.servers.size()) return StartResult::INVALID_INDEX;
+
+    auto &sc = app_config_.servers[index];
+
+    if (needs_installer(index)) {
+        return StartResult::INSTALLER_REQUIRED;
+    }
+
+    if (!sc.working_dir.empty() && !server::check_eula(sc.working_dir)) {
+        return StartResult::EULA_REQUIRED;
+    }
+
+    // 已在 server.properties 中启用（可能为用户手动配置）则直接使用
+    if (!sync_rcon_from_properties(index)) {
+        // 选端口：沿用已配置值，否则从 25575 起避开其他服务器已占用的端口
+        int port = sc.rcon_port > 0 ? sc.rcon_port : 25575;
+        for (;;) {
+            bool conflict = false;
+            for (size_t i = 0; i < app_config_.servers.size(); ++i) {
+                if (i != index && app_config_.servers[i].rcon_port == port) {
+                    conflict = true;
+                    ++port;
+                    break;
+                }
+            }
+            if (!conflict) break;
+        }
+
+        if (sc.rcon_password.empty()) {
+            sc.rcon_password = generate_rcon_password();
+        }
+        sc.rcon_port = port;
+
+        std::string path = sc.working_dir.empty()
+            ? "server.properties" : sc.working_dir + "/server.properties";
+        utils::IniParser parser;
+        parser.load(path);  // 文件不存在时从空配置开始，服务器启动时会补全其余默认值
+        parser.set("enable-rcon", "true");
+        parser.set("rcon.port", std::to_string(port));
+        parser.set("rcon.password", sc.rcon_password);
+        if (!parser.save(path)) {
+            sc.rcon_port = 0;
+            sc.rcon_password.clear();
+            return StartResult::RCON_WRITE_FAILED;
+        }
+        app_config_.save();
+
+        std::lock_guard<std::mutex> lock(rcon_mutex_);
+        rcon_targets_[index] = {port, sc.rcon_password};
+    }
+
+    return start_server(index, true);
+}
+
 void ServerManager::stop_server(size_t index) {
     if (server_processes_.count(index) > 0) {
         server_processes_[index].stop();
     }
 }
 
-StartResult ServerManager::restart_server(size_t index) {
+StartResult ServerManager::restart_server(size_t index, bool allow_no_rcon) {
     stop_server(index);
-    return start_server(index);
+    return start_server(index, allow_no_rcon);
 }
 
 bool ServerManager::send_command(size_t index, const std::string &command) {
@@ -143,6 +259,138 @@ bool ServerManager::send_command(size_t index, const std::string &command) {
     if (!proc || !proc->is_running()) return false;
     proc->send_command(command);
     return true;
+}
+
+bool ServerManager::needs_installer(size_t index) {
+    if (index >= app_config_.servers.size()) return false;
+    const auto &sc = app_config_.servers[index];
+    if (!server::get_core_type_info(sc.core_type).uses_installer) return false;
+    // 启动参数文件或可启动 jar 任一存在即视为已安装；
+    // 注意 jar 内容为安装器（如改名成 forge.jar 的安装器）不算可启动 jar
+    if (!sc.launch_args_file.empty() && std::filesystem::exists(sc.launch_args_file)) return false;
+    if (!sc.server_jar_path.empty() && std::filesystem::exists(sc.server_jar_path) &&
+        !server::jar_is_installer(sc.server_jar_path)) return false;
+    // 没有安装器可运行时不拦截启动（让 Java 报错原样呈现在控制台）
+    return !server::find_installer_jar(sc.working_dir).empty();
+}
+
+void ServerManager::apply_installer_detection(size_t index,
+                                              const server::DetectionResult &detection) {
+    if (index >= app_config_.servers.size()) return;
+    auto &sc = app_config_.servers[index];
+    sc.core_type = detection.core_type;
+    if (!detection.minecraft_version.empty()) sc.minecraft_version = detection.minecraft_version;
+    if (!detection.core_version.empty()) sc.core_version = detection.core_version;
+    sc.launch_args_file = detection.launch_args_file;
+    if (!detection.server_jar_path.empty()) sc.server_jar_path = detection.server_jar_path;
+    app_config_.save();
+}
+
+void ServerManager::append_console_line(size_t index, const std::string &line) {
+    auto it = console_buffers_.find(index);
+    if (it != console_buffers_.end()) {
+        it->second.push_line(line);
+    }
+    notify_line_listeners(index, line);
+}
+
+void ServerManager::start_rcon_poller() {
+    if (rcon_poller_.joinable()) return;
+    rcon_poller_stop_ = false;
+    rcon_poller_ = std::thread(&ServerManager::rcon_poller_loop, this);
+}
+
+void ServerManager::stop_rcon_poller() {
+    rcon_poller_stop_ = true;
+    if (rcon_poller_.joinable()) {
+        rcon_poller_.join();
+    }
+}
+
+// list 回复形如 "There are N of a max of M players online: a, b"（RCON 响应无时间戳）
+std::vector<std::string> ServerManager::parse_players_from_list(const std::string &response) {
+    constexpr std::string_view kPlayersMarker = "players online:";
+    std::vector<std::string> players;
+    size_t marker_pos = response.find(kPlayersMarker);
+    if (marker_pos == std::string::npos) return players;
+
+    std::string names_str = utils::trim(response.substr(marker_pos + kPlayersMarker.size()));
+    if (!names_str.empty()) {
+        auto names = utils::split(names_str, ',');
+        for (const auto &name : names) {
+            std::string trimmed = utils::trim(name);
+            if (!trimmed.empty()) {
+                players.push_back(trimmed);
+            }
+        }
+    }
+    return players;
+}
+
+void ServerManager::rcon_poller_loop() {
+    // 长连接由本线程独占持有并复用：vanilla 会为每条 RCON 连接
+    // 各打一行 starting/shutting down 日志，短连接高频轮询会刷屏
+    std::map<size_t, server::RconClient> connections;
+
+    while (!rcon_poller_stop_) {
+        std::vector<std::pair<size_t, RconTarget>> targets;
+        {
+            std::lock_guard<std::mutex> lock(rcon_mutex_);
+            for (const auto &[idx, target] : rcon_targets_) {
+                targets.emplace_back(idx, target);
+            }
+        }
+
+        // 清理目标已删除或凭据已变的连接
+        for (auto it = connections.begin(); it != connections.end();) {
+            bool alive = false;
+            for (const auto &[idx, target] : targets) {
+                if (idx == it->first && target.port == it->second.port() &&
+                    target.password == it->second.password()) {
+                    alive = true;
+                    break;
+                }
+            }
+            if (!alive) {
+                it = connections.erase(it);
+            } else {
+                ++it;
+            }
+        }
+
+        for (const auto &[idx, target] : targets) {
+            if (rcon_poller_stop_) break;
+
+            auto mit = players_mutexes_.find(idx);
+            if (mit == players_mutexes_.end()) continue;  // 服务器可能刚被删除
+
+            if (!is_running(idx)) {
+                // 停止状态下清空残留玩家
+                std::lock_guard<std::mutex> plock(mit->second);
+                players_lists_[idx].clear();
+                continue;
+            }
+
+            auto &conn = connections[idx];
+            if (!conn.is_open()) {
+                conn.open(target.port, target.password, 1500);
+            }
+            if (conn.is_open()) {
+                auto response = conn.execute("list", 1500);
+                if (response) {
+                    auto players = parse_players_from_list(*response);
+                    std::lock_guard<std::mutex> plock(mit->second);
+                    players_lists_[idx] = std::move(players);
+                }
+            }
+            // 建连或查询失败（启动中、密码被改等）时保留上次结果，下轮重试
+        }
+
+        // 3 秒一轮，细粒度睡眠以便及时响应退出
+        for (int i = 0; i < 30 && !rcon_poller_stop_; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+    }
 }
 
 void ServerManager::add_server(const config::ServerConfig &sc) {
@@ -191,6 +439,11 @@ void ServerManager::delete_server(size_t index) {
     rekey_map(console_buffers_);
     rekey_map(players_mutexes_);
     rekey_map(players_lists_);
+    {
+        std::lock_guard<std::mutex> lock(rcon_mutex_);
+        rcon_targets_.erase(index);
+        rekey_map(rcon_targets_);
+    }
 
     // 下标发生变化，通知所有行监听断开（SSE 客户端会自行重连）
     {

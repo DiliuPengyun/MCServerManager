@@ -236,12 +236,13 @@ ftxui::Component MainWindow::GetComponent(ScreenInteractive &screen) {
         auto *proc = manager_.process(idx);
         auto *buf = manager_.console(idx);
 
-        std::vector<std::string> players = manager_.players(idx);
+        auto players_provider = [this, idx] { return manager_.players(idx); };
+        bool rcon_avail = manager_.rcon_available(idx);
 
         int bk_count = backup_panel_.backup_count();
 
         auto dashboard_comp = dashboard_panel_.GetComponent(
-            sc, proc, buf, players, bk_count,
+            sc, proc, buf, players_provider, rcon_avail, bk_count,
             &console_panel_, &player_panel_,
             &config_panel_, &backup_panel_);
 
@@ -305,7 +306,11 @@ ftxui::Component MainWindow::GetComponent(ScreenInteractive &screen) {
     auto agree_btn = Button("同意 EULA 并启动", [this, &screen] {
         if (eula_pending_server_index_ < app_config_.servers.size()) {
             show_eula_popup_ = false;
-            manager_.agree_eula_and_start(eula_pending_server_index_);
+            // EULA 通过后若仍未启用 RCON，紧接着弹 RCON 确认框
+            if (manager_.agree_eula_and_start(eula_pending_server_index_) == core::StartResult::RCON_REQUIRED) {
+                rcon_pending_server_index_ = eula_pending_server_index_;
+                show_rcon_popup_ = true;
+            }
             screen.PostEvent(Event::Custom);
         }
     });
@@ -334,12 +339,69 @@ ftxui::Component MainWindow::GetComponent(ScreenInteractive &screen) {
         }) | border | size(WIDTH, LESS_THAN, 60);
     });
 
+    // ---- RCON 启用确认弹窗 ----
+    auto rcon_enable_btn = Button("启用 RCON 并启动", [this, &screen] {
+        if (rcon_pending_server_index_ < app_config_.servers.size()) {
+            auto result = manager_.enable_rcon_and_start(rcon_pending_server_index_);
+            if (result == core::StartResult::RCON_WRITE_FAILED) {
+                rcon_error_msg_ = "写入 server.properties 失败，请检查服务器目录权限";
+            } else {
+                rcon_error_msg_.clear();
+                show_rcon_popup_ = false;
+            }
+            screen.PostEvent(Event::Custom);
+        }
+    });
+    auto rcon_skip_btn = Button("直接启动（玩家管理不可用）", [this, &screen] {
+        if (rcon_pending_server_index_ < app_config_.servers.size()) {
+            show_rcon_popup_ = false;
+            rcon_error_msg_.clear();
+            manager_.start_server(rcon_pending_server_index_, true);
+            screen.PostEvent(Event::Custom);
+        }
+    });
+    auto rcon_cancel_btn = Button("取消", [this, &screen] {
+        show_rcon_popup_ = false;
+        rcon_error_msg_.clear();
+        screen.PostEvent(Event::Custom);
+    });
+    auto rcon_popup_content = Container::Vertical({
+        Renderer([this] {
+            Elements items;
+            items.push_back(text(""));
+            items.push_back(text(" 启用 RCON 以使用玩家管理？") | bold | color(Color::Yellow));
+            items.push_back(text(""));
+            items.push_back(text(" 玩家列表需要通过 RCON 从服务器获取。"));
+            items.push_back(text(" 选择「启用 RCON 并启动」会在 server.properties 中写入"));
+            items.push_back(text(" enable-rcon=true 及自动生成的端口与密码。"));
+            items.push_back(text(" 选择「直接启动」则本次不启用，玩家页将不可用。"));
+            if (!rcon_error_msg_.empty()) {
+                items.push_back(text(""));
+                items.push_back(text(" " + rcon_error_msg_) | color(Color::Red));
+            }
+            items.push_back(text(""));
+            return vbox(std::move(items));
+        }),
+        Container::Horizontal({rcon_enable_btn, rcon_skip_btn, rcon_cancel_btn}),
+    });
+    auto rcon_popup = Renderer(rcon_popup_content, [rcon_popup_content] {
+        return vbox({
+            rcon_popup_content->Render(),
+        }) | border | size(WIDTH, LESS_THAN, 64);
+    });
+
     auto root = Modal(main_layout, add_panel_component, show_add_server_popup_);
     auto root_with_server = Modal(root, server_config_component, show_server_config_popup_);
     auto root_with_eula = Modal(root_with_server, eula_popup, show_eula_popup_);
+    auto root_with_rcon = Modal(root_with_eula, rcon_popup, show_rcon_popup_);
 
-    auto root_with_esc = CatchEvent(root_with_eula, [this](Event event) {
+    auto root_with_esc = CatchEvent(root_with_rcon, [this](Event event) {
         if (event == Event::Escape) {
+            if (show_rcon_popup_) {
+                show_rcon_popup_ = false;
+                rcon_error_msg_.clear();
+                return true;
+            }
             if (show_eula_popup_) {
                 show_eula_popup_ = false;
                 return true;
@@ -390,9 +452,23 @@ void MainWindow::delete_server(size_t index) {
 void MainWindow::start_server(size_t index) {
     if (index >= app_config_.servers.size()) return;
 
-    if (manager_.start_server(index) == core::StartResult::EULA_REQUIRED) {
-        eula_pending_server_index_ = index;
-        show_eula_popup_ = true;
+    switch (manager_.start_server(index)) {
+        case core::StartResult::EULA_REQUIRED:
+            eula_pending_server_index_ = index;
+            show_eula_popup_ = true;
+            break;
+        case core::StartResult::RCON_REQUIRED:
+            rcon_pending_server_index_ = index;
+            show_rcon_popup_ = true;
+            break;
+        case core::StartResult::INSTALLER_REQUIRED:
+            // TUI 暂不提供安装引导，往控制台写提示（Web UI 有完整的安装流程）
+            manager_.append_console_line(index,
+                "[MCServerManager] 该整合包尚未运行安装器，服务端未安装。"
+                "请通过 Web UI 启动以引导安装，或手动运行目录中的安装器 jar。");
+            break;
+        default:
+            break;
     }
 }
 
@@ -401,7 +477,14 @@ void MainWindow::stop_server(size_t index) {
 }
 
 void MainWindow::restart_server(size_t index) {
-    manager_.restart_server(index);
+    if (index >= app_config_.servers.size()) return;
+
+    // 重启先完成停止；若未启用 RCON 则与启动一样弹确认框，
+    // 用户选择后由弹窗按钮完成后续启动
+    if (manager_.restart_server(index) == core::StartResult::RCON_REQUIRED) {
+        rcon_pending_server_index_ = index;
+        show_rcon_popup_ = true;
+    }
 }
 
 void MainWindow::apply_server_properties_path(size_t idx) {

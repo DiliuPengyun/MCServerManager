@@ -82,6 +82,8 @@ ServerConfig ServerConfig::from_json(const nlohmann::json& sj) {
     sc.minecraft_version = sj.value("minecraft_version", "");
     sc.core_version = sj.value("core_version", "");
     sc.launch_args_file = sj.value("launch_args_file", "");
+    sc.rcon_port = sj.value("rcon_port", 0);
+    sc.rcon_password = sj.value("rcon_password", "");
     return sc;
 }
 
@@ -170,6 +172,8 @@ bool AppConfig::save() const {
             sj["minecraft_version"] = s.minecraft_version;
             sj["core_version"] = s.core_version;
             sj["launch_args_file"] = s.launch_args_file;
+            sj["rcon_port"] = s.rcon_port;
+            sj["rcon_password"] = s.rcon_password;
             servers_array.push_back(std::move(sj));
         }
         j["servers"] = std::move(servers_array);

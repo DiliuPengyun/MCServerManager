@@ -39,7 +39,8 @@ static JavaInstallResult run_java_installer(const std::string &java_path,
                                             const std::string &working_dir,
                                             InstallProgressCallback progress) {
     std::string abs_jar = std::filesystem::absolute(jar_path).string();
-    std::string cmd = java_path + " -jar \"" + abs_jar + "\" --installServer 2>&1";
+    // headless 兜底：个别安装器变体即使带 --installServer 也可能触碰 AWT
+    std::string cmd = java_path + " -Djava.awt.headless=true -jar \"" + abs_jar + "\" --installServer 2>&1";
     if (progress) progress("Running installer: " + cmd);
 
     ScopedChdir guard(working_dir);

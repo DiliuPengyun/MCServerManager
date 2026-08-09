@@ -24,6 +24,11 @@ struct ServerConfig {
     std::string core_version;
     std::string launch_args_file;
 
+    // RCON 凭据（玩家管理功能用）。rcon_port 为 0 表示未配置。
+    // 由管理器在用户同意后写入 server.properties，并在此保存副本用于连接。
+    int rcon_port{0};
+    std::string rcon_password;
+
     static ServerConfig from_json(const nlohmann::json& sj);
 };
 

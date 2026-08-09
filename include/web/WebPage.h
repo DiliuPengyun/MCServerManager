@@ -620,6 +620,46 @@ select option { background: var(--panel); }
   </div>
 </div>
 
+<!-- RCON 启用确认弹窗 -->
+<div class="modal-mask" id="modal-rcon" style="display:none">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>启用 RCON 以使用玩家管理？</h3>
+      <button class="modal-x" data-close="modal-rcon" title="关闭">×</button>
+    </div>
+    <div class="modal-body">
+      <p>服务器「<b id="rcon-srv"></b>」未启用 RCON。玩家列表需要通过 RCON 从服务器获取。</p>
+      <p class="dim">点击「启用 RCON 并启动」会在 server.properties 中写入 enable-rcon=true 及自动生成的端口与密码，然后启动服务器；已运行的服务器将在重启后生效。</p>
+      <p class="dim">点击「直接启动」则本次不启用，玩家页将不可用。</p>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" data-close="modal-rcon">取消</button>
+      <button class="btn" id="rcon-skip">直接启动</button>
+      <button class="btn btn-primary" id="rcon-agree">启用 RCON 并启动</button>
+    </div>
+  </div>
+</div>
+
+<!-- 安装器运行确认弹窗（整合包未安装） -->
+<div class="modal-mask" id="modal-installer" style="display:none">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>需要先运行安装器</h3>
+      <button class="modal-x" id="installer-x" title="关闭">×</button>
+    </div>
+    <div class="modal-body">
+      <p>服务器「<b id="installer-srv"></b>」是尚未安装的整合包：目录中只有安装器，服务端核心还未安装。</p>
+      <p class="dim">点击「运行安装器」将执行安装器、下载并安装服务端（可能需要数分钟），安装完成后会自动继续启动流程。</p>
+      <div class="wiz-log" id="installer-log" style="display:none"></div>
+      <p class="dim" id="installer-hint" style="display:none">安装进行中，请勿关闭本窗口…（控制台页可查看实时输出）</p>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" id="installer-cancel">取消</button>
+      <button class="btn btn-primary" id="installer-agree">运行安装器</button>
+    </div>
+  </div>
+</div>
+
 <script>
 'use strict';
 /* ================= 工具 ================= */
@@ -659,6 +699,11 @@ const propInputs = new Map();// key -> input 元素
 let backupsFor = -1;
 let lastBackups = [];
 let eulaIdx = -1;
+let rconIdx = -1;
+let rconPendingAction = 'start';
+let installerIdx = -1;
+let installerPendingAction = 'start';
+let installerTask = null;    // { id, timer, logShown, running }
 let wiz = null;              // 添加服务器向导状态
 
 /* ================= API ================= */
@@ -918,13 +963,14 @@ async function loadConsole() {
   closeStream();
   const box = $('console-log');
   box.innerHTML = '';
+  consoleQueue = [];
   consoleStick = true;
   updateBackToBottom();
   try {
     const data = await api('/api/servers/' + idx + '/console?tail=500');
     if (current !== idx || currentTab !== 'console') return;
     (data.lines || []).forEach(line => appendConsoleLine(line));
-    scrollConsoleToBottom();
+    flushConsoleQueue();
   } catch (e) { /* 历史读取失败时仍可接收实时日志 */ }
   if (current === idx && currentTab === 'console') openStream(idx);
 }
@@ -944,15 +990,52 @@ function closeStream() {
   if (evtSource) { evtSource.close(); evtSource = null; }
 }
 
+// 控制台行缓冲：SSE 每行一条消息，刷屏时逐行 append + 逐行读 scrollHeight
+// 会强制浏览器每行重排（layout thrashing），把主线程卡死。
+// 先入队，再用 requestAnimationFrame 合帧批量 append，每帧只滚动一次。
+let consoleQueue = [];
+let consoleFlushPending = false;
+
 function appendConsoleLine(line) {
+  consoleQueue.push(line);
+  if (consoleQueue.length > 5000) {
+    flushConsoleQueue();  // 后台标签页 rAF 停摆时兜底，防止队列无限增长
+  } else {
+    scheduleConsoleFlush();
+  }
+}
+
+function scheduleConsoleFlush() {
+  if (consoleFlushPending) return;
+  consoleFlushPending = true;
+  requestAnimationFrame(flushConsoleQueue);
+}
+
+function flushConsoleQueue() {
+  consoleFlushPending = false;
+  if (!consoleQueue.length) return;
   const box = $('console-log');
-  if (!box) return;
-  const div = document.createElement('div');
-  div.className = 'log-line' + logClass(line);
-  div.textContent = line;
-  box.appendChild(div);
+  if (!box) { consoleQueue = []; return; }
+  const frag = document.createDocumentFragment();
+  for (const line of consoleQueue) {
+    const div = document.createElement('div');
+    div.className = 'log-line' + logClass(line);
+    div.textContent = line;
+    frag.appendChild(div);
+  }
+  consoleQueue = [];
+  box.appendChild(frag);
   while (box.childElementCount > 3000) box.removeChild(box.firstChild);
   if (consoleStick) scrollConsoleToBottom();
+}
+
+// 启动/重启后开启新会话：清空旧日志视图（SSE 流保持连接，新日志继续推送）
+function resetConsoleView() {
+  const box = $('console-log');
+  if (box) box.innerHTML = '';
+  consoleQueue = [];
+  consoleStick = true;
+  updateBackToBottom();
 }
 
 function scrollConsoleToBottom() {
@@ -979,10 +1062,15 @@ function renderPlayers() {
   const s = servers[current];
   const box = $('players-content');
   if (!s) { box.innerHTML = ''; return; }
-  $('players-title').textContent = '在线玩家' + (s.state === 'RUNNING' ? '（' + (s.players || []).length + '）' : '');
+  const rconOk = !!s.rcon;
+  $('players-title').textContent = '在线玩家' + (s.state === 'RUNNING' && rconOk ? '（' + (s.players || []).length + '）' : '');
   box.innerHTML = '';
   if (s.state !== 'RUNNING') {
     box.innerHTML = '<div class="side-empty">服务器未运行，启动后可查看在线玩家</div>';
+    return;
+  }
+  if (!rconOk) {
+    box.innerHTML = '<div class="side-empty">玩家管理不可用：该服务器未启用 RCON。<br>下次启动时选择「启用 RCON 并启动」即可使用本页。</div>';
     return;
   }
   const players = s.players || [];
@@ -1304,22 +1392,41 @@ async function deleteServer() {
   await refresh();
 }
 
-/* ================= 启停操作 / EULA ================= */
-async function doAction(action) {
+/* ================= 启停操作 / EULA / RCON ================= */
+async function doAction(action, allowNoRcon) {
   if (current < 0) return;
   const idx = current;
   try {
-    await api('/api/servers/' + idx + '/' + action, { method: 'POST', body: '{}' });
+    const body = allowNoRcon ? { allow_no_rcon: true } : {};
+    await api('/api/servers/' + idx + '/' + action, { method: 'POST', body: JSON.stringify(body) });
     toast(action === 'start' ? '启动指令已发送' : action === 'stop' ? '停止指令已发送' : '重启指令已发送', 'success');
   } catch (e) {
+    if (e.status === 409 && e.data && e.data.error === 'installer_required') {
+      installerIdx = idx;
+      installerPendingAction = action;
+      $('installer-srv').textContent = (servers[idx] && servers[idx].name) || '';
+      resetInstallerModal();
+      openModal('modal-installer');
+      return;
+    }
     if (e.status === 409 && e.data && e.data.error === 'eula_required') {
       eulaIdx = idx;
       $('eula-srv').textContent = (servers[idx] && servers[idx].name) || '';
       openModal('modal-eula');
       return;
     }
+    if (e.status === 409 && e.data && e.data.error === 'rcon_required') {
+      rconIdx = idx;
+      rconPendingAction = action;
+      $('rcon-srv').textContent = (servers[idx] && servers[idx].name) || '';
+      openModal('modal-rcon');
+      return;
+    }
     toast('操作失败: ' + e.message, 'error');
     return;
+  }
+  if (action !== 'stop' && currentTab === 'console' && current === idx) {
+    resetConsoleView();
   }
   setTimeout(refresh, 400);
 }
@@ -1330,9 +1437,123 @@ async function agreeEula() {
     await api('/api/servers/' + eulaIdx + '/eula', { method: 'POST', body: '{}' });
     toast('已同意 EULA，服务器启动中', 'success');
     closeModal('modal-eula');
+    if (currentTab === 'console' && eulaIdx === current) {
+      resetConsoleView();
+    }
     setTimeout(refresh, 400);
   } catch (e) {
+    // EULA 通过后紧接着引导 RCON 启用
+    if (e.status === 409 && e.data && e.data.error === 'rcon_required') {
+      closeModal('modal-eula');
+      rconIdx = eulaIdx;
+      rconPendingAction = 'start';
+      $('rcon-srv').textContent = (servers[rconIdx] && servers[rconIdx].name) || '';
+      openModal('modal-rcon');
+      return;
+    }
     toast('EULA 操作失败: ' + e.message, 'error');
+  }
+}
+
+// 同意启用 RCON：写入配置并启动；若原操作是重启（服务器仍在运行），再补一次重启使 RCON 生效
+async function agreeRcon() {
+  if (rconIdx < 0) return;
+  const action = rconPendingAction;
+  try {
+    await api('/api/servers/' + rconIdx + '/rcon', { method: 'POST', body: '{}' });
+    toast('已启用 RCON，服务器启动中', 'success');
+    closeModal('modal-rcon');
+    if (currentTab === 'console' && rconIdx === current) {
+      resetConsoleView();
+    }
+    if (action === 'restart') {
+      await doAction('restart', true);
+      return;
+    }
+    setTimeout(refresh, 400);
+  } catch (e) {
+    toast('启用 RCON 失败: ' + e.message, 'error');
+  }
+}
+
+// 拒绝启用 RCON：按原动作直接启动/重启，玩家页保持不可用
+async function declineRcon() {
+  if (rconIdx < 0) return;
+  const action = rconPendingAction;
+  closeModal('modal-rcon');
+  await doAction(action, true);
+}
+
+/* ================= 安装器（整合包未安装） ================= */
+function resetInstallerModal() {
+  $('installer-log').style.display = 'none';
+  $('installer-log').innerHTML = '';
+  $('installer-hint').style.display = 'none';
+  $('installer-agree').style.display = '';
+  $('installer-cancel').style.display = '';
+  $('installer-cancel').textContent = '取消';
+  installerTask = null;
+}
+
+// 安装进行中禁止关闭（安装继续在后端执行，但弹窗轮询会中断）
+function closeInstallerModal() {
+  if (installerTask && installerTask.running) { toast('安装进行中，暂时无法关闭', 'warn'); return; }
+  closeModal('modal-installer');
+}
+
+// 用户同意运行安装器：创建安装任务并轮询进度，完成后自动继续原启动动作
+async function agreeInstaller() {
+  if (installerIdx < 0) return;
+  const idx = installerIdx;
+  let r;
+  try {
+    r = await api('/api/servers/' + idx + '/install', { method: 'POST', body: '{}' });
+  } catch (e) {
+    toast('启动安装器失败: ' + e.message, 'error');
+    return;
+  }
+  installerTask = { id: r.task_id, timer: null, logShown: 0, running: true };
+  $('installer-log').style.display = 'block';
+  $('installer-log').innerHTML = '';
+  $('installer-hint').style.display = 'block';
+  $('installer-agree').style.display = 'none';
+  $('installer-cancel').style.display = 'none';
+  installerTask.timer = setInterval(pollInstallerTask, 1000);
+  pollInstallerTask();
+}
+
+async function pollInstallerTask() {
+  if (!installerTask || installerTask.id == null) return;
+  let t;
+  try {
+    t = await api('/api/tasks/' + installerTask.id);
+  } catch (e) { return; } // 单次失败忽略，等待下个周期重试
+  const log = t.log || [];
+  const box = $('installer-log');
+  for (let i = installerTask.logShown; i < log.length; i++) {
+    const d = document.createElement('div');
+    d.textContent = log[i];
+    box.appendChild(d);
+  }
+  if (log.length > installerTask.logShown) installerTask.logShown = log.length;
+  box.scrollTop = box.scrollHeight;
+  if (t.status === 'running') return;
+  clearInterval(installerTask.timer);
+  installerTask.timer = null;
+  installerTask.running = false;
+  if (t.status === 'done') {
+    closeModal('modal-installer');
+    toast('服务端安装完成，继续启动流程', 'success');
+    refresh(true);
+    const action = installerPendingAction || 'start';
+    installerPendingAction = 'start';
+    // 安装完成后自动继续原动作（可能继续弹出 EULA / RCON 确认框）
+    await doAction(action);
+  } else {
+    toast('安装失败: ' + (t.error || '未知错误'), 'error');
+    $('installer-hint').style.display = 'none';
+    $('installer-cancel').style.display = '';
+    $('installer-cancel').textContent = '关闭';
   }
 }
 
@@ -1723,18 +1944,23 @@ function bindStaticEvents() {
   $('sv-delete').addEventListener('click', deleteServer);
   $('set-save').addEventListener('click', saveSettings);
   $('eula-agree').addEventListener('click', agreeEula);
+  $('rcon-agree').addEventListener('click', agreeRcon);
+  $('rcon-skip').addEventListener('click', declineRcon);
+  $('installer-agree').addEventListener('click', agreeInstaller);
+  $('installer-cancel').addEventListener('click', closeInstallerModal);
+  $('installer-x').addEventListener('click', closeInstallerModal);
   $('add-x').addEventListener('click', closeAddModal);
   document.querySelectorAll('[data-close]').forEach(b =>
     b.addEventListener('click', () => closeModal(b.getAttribute('data-close'))));
-  ['modal-settings', 'modal-eula'].forEach(id => {
-    $(id).addEventListener('click', e => { if (e.target === $(id)) closeModal(id); });
-  });
-  $('modal-add').addEventListener('click', e => { if (e.target === $('modal-add')) closeAddModal(); });
+  // 弹窗只允许通过 叉号 / 取消按钮 / Esc 关闭；点击遮罩层不关闭，
+  // 避免误点或「按住拖出窗口外松开」导致已填写内容丢失。
   document.addEventListener('keydown', e => {
     if (e.key !== 'Escape') return;
     if ($('modal-add').style.display === 'flex') closeAddModal();
     else if ($('modal-settings').style.display === 'flex') closeModal('modal-settings');
     else if ($('modal-eula').style.display === 'flex') closeModal('modal-eula');
+    else if ($('modal-rcon').style.display === 'flex') closeModal('modal-rcon');
+    else if ($('modal-installer').style.display === 'flex') closeInstallerModal();
   });
 }
 

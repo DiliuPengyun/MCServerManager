@@ -19,7 +19,8 @@ ftxui::Component DashboardPanel::GetComponent(
         config::ServerConfig &server_config,
         server::ServerProcess *process,
         server::ConsoleBuffer *buffer,
-        const std::vector<std::string> &players,
+        std::function<std::vector<std::string>()> players_provider,
+        bool rcon_available,
         int backup_count,
         ConsolePanel *console_panel,
         PlayerPanel *player_panel,
@@ -28,7 +29,6 @@ ftxui::Component DashboardPanel::GetComponent(
 
     sub_tab_int_ = static_cast<int>(current_sub_tab_);
     std::vector<std::string> tab_labels = {"概览", "控制台", "玩家", "配置编辑", "备份"};
-    std::vector<std::string> players_copy = players;
 
     auto tab_toggle = ftxui::Toggle(tab_labels, &sub_tab_int_);
 
@@ -48,7 +48,8 @@ ftxui::Component DashboardPanel::GetComponent(
     // ---- Overview tab ----
     auto overview_renderer = Renderer([=, this, &server_config] {
         auto state = process ? process->state() : server::ServerState::STOPPED;
-        int player_count = static_cast<int>(players_copy.size());
+        int player_count = players_provider
+            ? static_cast<int>(players_provider().size()) : 0;
         int console_line_count = buffer ? buffer->line_count() : 0;
 
         auto disp = get_state_display(state);
@@ -153,7 +154,7 @@ ftxui::Component DashboardPanel::GetComponent(
     // ---- Players tab ----
     ftxui::Component players_tab;
     if (player_panel && process) {
-        players_tab = player_panel->GetComponent(process, players_copy);
+        players_tab = player_panel->GetComponent(process, players_provider, rcon_available);
     } else {
         players_tab = make_empty_state_component("请先选择并启动一个服务器。");
     }

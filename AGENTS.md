@@ -12,7 +12,7 @@ MCServerManager 是一个基于 [FTXUI](https://github.com/ArthurSonzogni/FTXUI)
 - 多核心支持：Vanilla、Paper（README 注明目前有问题）、Spigot、Forge、NeoForge、Fabric、自定义
 - 自动安装：从各官方 API 查询版本并下载安装服务器核心
 - 控制台：可滚动日志输出（环形缓冲 5000 行）与指令输入
-- 玩家管理：通过向服务器发送 `list` 等命令查看在线玩家、踢出、封禁
+- 玩家管理：通过 **RCON** 周期执行 `list` 获取在线玩家、踢出、封禁。启动时若服务器未启用 RCON，会弹窗询问：同意后管理器自动在 `server.properties` 写入 `enable-rcon=true` 与自动生成的 `rcon.port`/`rcon.password`（凭据副本存于 `config.json` 的 `rcon_port`/`rcon_password`）；拒绝则直接启动，玩家页灰显不可用
 - 备份 / 恢复：世界目录的带时间戳快照
 - `server.properties` 图形化编辑器、EULA 检查与同意、向导式创建服务器
 
@@ -54,8 +54,11 @@ src/Application.cpp     创建 FTXUI 全屏 ScreenInteractive，开启 100ms 定
 ```
 
 - **`core/`** —— `ServerManager`：UI 无关的控制层（从 MainWindow 抽离）。持有 `AppConfig`、`std::map<size_t, ServerProcess>`、`ConsoleBuffer`、玩家列表等全部运行态，提供 `start/stop/restart/send_command/state/players` 与 EULA 处理（`StartResult::EULA_REQUIRED`），并支持注册控制台行监听（Web SSE 用）。**TUI 与 Web UI 都通过它操作服务器。**
+  - 启动时的 **RCON 检查**：`start_server(index, allow_no_rcon)` 在 EULA 之后检查 `server.properties` 是否已启用 RCON 且有密码，未启用返回 `StartResult::RCON_REQUIRED`；`enable_rcon_and_start(index)` 负责写入 RCON 配置（端口从 25575 起避开其他服务器已占用项）并启动。`rcon_available(index)` 供 UI 决定玩家页是否灰显。
+  - 启动时的 **安装器检查**（先于 EULA）：Forge/NeoForge 服务器的启动参数文件与可启动 jar 均缺失且目录中存在安装器 jar 时，`needs_installer()` 为真、`start_server` 返回 `StartResult::INSTALLER_REQUIRED`；用户同意后由 UI 层在后台线程运行安装器（`server::run_installer_jar`），成功后 `apply_installer_detection()` 更新配置，再重新走启动流程（EULA → RCON → 启动）。`append_console_line()` 用于把安装器输出注入控制台缓冲区与行监听。TUI 暂无安装引导，只在控制台写提示；Web UI 有完整流程。
+  - **RCON 玩家轮询**：`load()` 启动后台线程，每 3 秒对运行中且已配置 RCON 的服务器执行 `list`（目标凭据存于 `rcon_targets_`，随删除服务器一并清理），结果缓存进 `players_lists_` 供 `players()` 读取。
 - **`web/`** —— Web UI（`MCServerManager web [端口]` 模式）：
-  - `WebServer`：基于内置 `third_party/httplib.h` 服务端的完整 REST + SSE 接口（服务器 CRUD 与启停、EULA、控制台快照/SSE 流、发指令、server.properties 读写、备份增删恢复、全局设置、核心类型/版本清单、异步安装任务轮询），令牌认证（`Authorization: Bearer` 或 `?token=`），线程池限为 4；配置与容器访问由 `api_mutex` 串行化（stop 最长持锁约 30 秒）。
+  - `WebServer`：基于内置 `third_party/httplib.h` 服务端的完整 REST + SSE 接口（服务器 CRUD 与启停、EULA、RCON 启用、控制台快照/SSE 流、发指令、server.properties 读写、备份增删恢复、全局设置、核心类型/版本清单、异步安装任务轮询），令牌认证（`Authorization: Bearer` 或 `?token=`），线程池限为 4；配置与容器访问由 `api_mutex` 串行化（stop 最长持锁约 30 秒）。未启用 RCON 时 `/start` 与 `/restart` 返回 409 `rcon_required`，前端弹窗选择 `POST /rcon`（启用并启动）或携带 `allow_no_rcon` 重发原动作（直接启动）；`/restart` 在停止前同步预检 RCON。整合包未安装时 `/start` 与 `/restart` 返回 409 `installer_required`，前端弹窗确认后 `POST /install` 后台运行安装器（进度写入安装任务，同时经 `append_console_line` 注入控制台 SSE），前端轮询 `/api/tasks/<id>`，成功后自动重发原启动动作（可能继续链式弹出 EULA / RCON 框）。
   - `WebPage.h`：内嵌的功能完整单页应用（约 70 KB，原生 JS + EventSource，无外部依赖），含概览/控制台/玩家/配置/备份/服务器设置标签页与添加服务器向导、全局设置弹窗。
   - `WebDaemon`：fork 守护进程——父进程通过管道确认子进程绑定端口后打印访问地址/令牌并退出（不阻塞终端）；子进程 setsid、重定向 stdio 到 `<配置目录>/web.log`、写 `web.pid`，sigwait 线程处理 SIGTERM/SIGINT 优雅退出。退出时与 TUI 一样 `detach` 而非停止服务器。**单实例限制**：httplib 在 Linux 上默认 `SO_REUSEPORT`，重复启动不会报端口占用而是多进程分摊连接，因此启动时通过 `web.pid` 检查并拒绝第二个实例。
   - 配置项：`web_port`（默认 8080）、`web_token`（首次启动自动生成 32 位十六进制），均存于 `config.json`。
@@ -67,13 +70,14 @@ src/Application.cpp     创建 FTXUI 全屏 ScreenInteractive，开启 100ms 定
   - `LaunchConfig`：按核心类型构建 JVM 参数；Forge/NeoForge 使用 launch args 文件而非 `-jar`。
   - `CoreType`：`CoreType` 枚举与 `CORE_TYPES` 常量表（id、显示名、是否用安装器）。
   - `VersionManifest` + `CoreInstaller`：从 Mojang / Paper / NeoForge / Forge / Fabric 官方 API 查询版本并下载安装核心（Forge/NeoForge 需运行 installer jar）。
-  - `CoreDetector`：探测已有目录中的服务端核心类型与版本。
+  - `CoreDetector`：探测已有目录中的服务端核心类型与版本。优先按 `libraries/net/{neoforged,minecraftforge,fabricmc}` 目录判定；无 libraries 的整合包（未运行安装器或旧版打包）按顶层 jar 文件名中的加载器标记识别（neoforge 先于 forge 匹配），只发现安装器 jar 时判定类型但留空 jar 路径。安装器识别基于**内容**（扫描 jar 尾部 zip 中央目录中的 `minecraftforge/installer`、`fml/installer`、`neoforged/installer` 条目名），整合包把安装器改名成 `forge.jar` 也能识别；`find_installer_jar()` 与 `jar_is_installer()` 供未安装整合包定位/判定安装器。jar 兜底递归扫描跳过 `mods` 目录。
   - `EulaChecker`：检查 / 同意 `eula.txt`。
+  - `RconClient`：Source RCON 协议的极简同步客户端（auth + 单命令往返），**保持长连接复用**（vanilla 会为每条 RCON 连接各打一行 starting/shutting down 日志，短连接高频轮询会刷屏），仅在断开后重建；用于玩家轮询线程向本机服务器周期发送 `list`。
   - `ConsoleBuffer`：带互斥锁的 5000 行环形日志缓冲。
 - **`ui/`** —— FTXUI 界面层：
-  - `MainWindow`：顶层组件，侧栏含「仪表盘 / 设置」；**本身不持有服务器运行态**，通过 `core::ServerManager` 操作（`app_config_` 是 `manager_.config()` 的引用），只保留弹窗、列表选中、面板切换等纯 UI 状态。
+  - `MainWindow`：顶层组件，侧栏含「仪表盘 / 设置」；**本身不持有服务器运行态**，通过 `core::ServerManager` 操作（`app_config_` 是 `manager_.config()` 的引用），只保留弹窗、列表选中、面板切换等纯 UI 状态。启动遇 `EULA_REQUIRED` / `RCON_REQUIRED` 时分别弹 EULA / RCON 确认框（EULA 同意后会链式弹出 RCON 框）。
   - `DashboardPanel`：服务器详情页，子标签为 概览 / 控制台 / 玩家 / 配置 / 备份，内嵌下列各面板。
-  - `ConsolePanel`（日志滚动与命令输入）、`PlayerPanel`（在线玩家/踢出/封禁）、`ConfigPanel`（server.properties 编辑器）、`BackupPanel`（备份/恢复）、`SettingsPanel`（全局设置）、`AddServerPanel`（向导式创建服务器）、`ServerPanel`（单个服务器的配置编辑与删除）。
+  - `ConsolePanel`（日志滚动与命令输入）、`PlayerPanel`（在线玩家/踢出/封禁，数据来自控制层 RCON 轮询；RCON 不可用时整页灰显）、`ConfigPanel`（server.properties 编辑器）、`BackupPanel`（备份/恢复）、`SettingsPanel`（全局设置）、`AddServerPanel`（向导式创建服务器）、`ServerPanel`（单个服务器的配置编辑与删除）。
   - 辅助组件：`DynamicSlot`（动态切换子组件）、`UiHelpers`、`MenuHelpers`、`NavigationHelpers`（Tab 焦点导航）、`StateDisplayInfo`。
 - **`utils/`** —— 通用工具：
   - `Downloader`：httplib 封装（`http_get` / `http_get_json_parsed` / `download_file` 带进度回调）。
@@ -105,6 +109,7 @@ src/Application.cpp     创建 FTXUI 全屏 ScreenInteractive，开启 100ms 定
 
 - `ProcessUtils` 与 `TmuxSession` 大量通过**字符串拼接构造 shell 命令**（popen / system）。修改涉及路径、会话名、玩家名等外部输入的代码时，必须注意 shell 转义与注入风险；会话名必须经过 `TmuxSession::sanitize_session_name()` 净化。
 - `agree_eula()` 会修改服务器目录下的 `eula.txt`（代表用户同意 Mojang EULA），不要在未授权的流程中静默调用。
+- `enable_rcon_and_start()` 会修改服务器目录下的 `server.properties`（启用 RCON 并写入端口/密码），凭据副本以明文存于 `config.json` 与 `server.properties`——同属需用户明确同意的操作，不要在未授权流程中静默调用。
 - 网络下载均指向各官方 API 域名（Mojang、Paper 等）；更换下载源时需在代码中明确。
 - 配置文件存储在用户配置目录（`~/.config/MCServerManager/`），不要写入仓库目录。
 - `ServerProcess::stop()` 先发送 `stop` 命令等待最多 30 秒，超时后强制 `kill_session`——调整超时逻辑时注意数据损坏风险。
