@@ -137,8 +137,11 @@ cargo test --all-targets
 cargo build
 python3 tests/web_resilience.py "$PWD/target/debug/MCServerManager"
 python3 tests/tui_smoke.py "$PWD/target/debug/MCServerManager"
+node tests/gui_regression.js "$PWD/target/debug/MCServerManager"
 node tests/frontend_state.js
 ```
+
+GUI 回归需要 `playwright-core` 和对应版本的 Chromium，位置用 `PLAYWRIGHT_CORE`、`PLAYWRIGHT_BROWSERS_PATH` 指定；证据默认写入 `artifacts/gui-<时间戳>/`，用第二个参数指定目录时该目录必须不存在或为空。缺少浏览器环境时如实报告该项未运行，不得记为通过。
 
 配套 CLI（位于仓库同级的 `../MCSMCli`）：
 

@@ -127,6 +127,14 @@ python3 tests/web_resilience.py "$PWD/target/debug/MCServerManager"
 python3 tests/tui_smoke.py "$PWD/target/debug/MCServerManager"
 ```
 
+真实浏览器 GUI 回归（临时 XDG、HOME 和随机端口，不启动 Minecraft）。需要 `playwright-core` 和对应版本的 Chromium，位置分别由环境变量 `PLAYWRIGHT_CORE` 和 `PLAYWRIGHT_BROWSERS_PATH` 指定。截图和页面文字写入 `artifacts/gui-<时间戳>/`，也可以用第二个参数指定一个不存在或为空的目录：
+
+```bash
+node tests/gui_regression.js "$PWD/target/debug/MCServerManager"
+```
+
+截图里的中文依赖系统可用的中文字体；断言只检查页面文字和状态，不受字体影响。
+
 配套 CLI 与真实后端的联调：
 
 ```bash

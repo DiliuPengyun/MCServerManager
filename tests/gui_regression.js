@@ -8,8 +8,16 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 
 const binary = path.resolve(process.argv[2] || 'target/debug/MCServerManager');
-const output = path.resolve(process.argv[3] || 'gui-latest');
+// 未指定时每次写入新的证据目录；指定时该目录必须不存在或为空。
+const output = path.resolve(process.argv[3] || path.join('artifacts', `gui-${timestamp()}`));
 const playwright = require(process.env.PLAYWRIGHT_CORE || 'playwright-core');
+
+function timestamp() {
+  const now = new Date();
+  const pad = value => String(value).padStart(2, '0');
+  return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-`
+    + `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+}
 
 function freePort() {
   return new Promise((resolve, reject) => {
