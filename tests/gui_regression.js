@@ -74,7 +74,6 @@ async function waitFor(fn, timeout = 10000) {
     default_server_dir: defaultServerDir,
     global_java_path: 'java',
     active_server_id: servers[0].id,
-    active_server_index: 0,
     web_port: port,
     servers,
   }));
