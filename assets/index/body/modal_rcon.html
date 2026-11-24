@@ -1,0 +1,20 @@
+
+<!-- RCON 启用确认弹窗 -->
+<div class="modal-mask" id="modal-rcon" style="display:none">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>启用 RCON 以使用玩家管理？</h3>
+      <button class="modal-x" data-close="modal-rcon" title="关闭">×</button>
+    </div>
+    <div class="modal-body">
+      <p>服务器「<b id="rcon-srv"></b>」未启用 RCON。玩家列表需要通过 RCON 从服务器获取。</p>
+      <p class="dim">点击「启用 RCON 并启动」会在 server.properties 中写入 enable-rcon=true、选定或已有的端口以及生成或已有的密码；服务器未运行时随即启动，运行中则要重启后才生效。</p>
+      <p class="dim">点击「直接启动」则本次不启用，玩家页将不可用。</p>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" data-close="modal-rcon">取消</button>
+      <button class="btn" id="rcon-skip">直接启动</button>
+      <button class="btn btn-primary" id="rcon-agree">启用 RCON 并启动</button>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,19 @@
+
+<!-- EULA 确认弹窗 -->
+<div class="modal-mask" id="modal-eula" style="display:none">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>需要同意 Minecraft EULA</h3>
+      <button class="modal-x" data-close="modal-eula" title="关闭">×</button>
+    </div>
+    <div class="modal-body">
+      <p>启动服务器「<b id="eula-srv"></b>」前，需要先同意 Mojang 的《Minecraft 最终用户许可协议》（EULA）。</p>
+      <p class="eula-link">协议全文：<span class="mono">https://aka.ms/MinecraftEULA</span></p>
+      <p class="dim">点击「同意并启动」会将服务器目录下 eula.txt 中的 eula 置为 true，然后继续启动流程；若服务器尚未启用 RCON，会接着询问是否启用。</p>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" data-close="modal-eula">取消</button>
+      <button class="btn btn-primary" id="eula-agree">同意并启动</button>
+    </div>
+  </div>
+</div>

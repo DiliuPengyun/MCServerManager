@@ -1,0 +1,30 @@
+<div id="toast-root"></div>
+
+<!-- 主界面 -->
+<div id="app" style="display:none">
+  <aside id="sidebar">
+    <div class="brand">
+      <div class="logo">MC</div>
+      <div>
+        <div class="brand-name">MCServerManager</div>
+        <div class="brand-sub">Web 控制台</div>
+      </div>
+    </div>
+    <div class="side-actions">
+      <button class="btn btn-primary block" id="btn-add">＋ 添加服务器</button>
+    </div>
+    <div id="server-list"></div>
+    <div class="sidebar-footer">
+      <button class="btn btn-ghost block" id="btn-global-settings">⚙ 　全局设置</button>
+    </div>
+  </aside>
+  <div id="sidebar-mask"></div>
+
+  <main id="main">
+    <div id="empty-state" style="display:none">
+      <div class="empty-inner">
+        <div class="glyph">&gt;_</div>
+        <h2>未选择服务器</h2>
+        <p>从左侧列表选择一台服务器进行管理<br>或点击「添加服务器」创建新实例</p>
+      </div>
+    </div>

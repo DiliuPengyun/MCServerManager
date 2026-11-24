@@ -1,0 +1,20 @@
+
+<!-- 安装器运行确认弹窗（整合包未安装） -->
+<div class="modal-mask" id="modal-installer" style="display:none">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>需要先运行安装器</h3>
+      <button class="modal-x" id="installer-x" title="关闭">×</button>
+    </div>
+    <div class="modal-body">
+      <p>服务器「<b id="installer-srv"></b>」的整合包尚未安装：检测到 Forge/NeoForge 安装器，但还没有可启动的服务端核心。</p>
+      <p class="dim">点击「运行安装器」将执行安装器、下载并安装服务端（可能需要数分钟），安装完成后会自动继续启动流程。</p>
+      <div class="wiz-log" id="installer-log" style="display:none"></div>
+      <p class="dim" id="installer-hint" style="display:none">安装进行中，请勿关闭本窗口…（控制台页可查看实时输出）</p>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" id="installer-cancel">取消</button>
+      <button class="btn btn-primary" id="installer-agree">运行安装器</button>
+    </div>
+  </div>
+</div>

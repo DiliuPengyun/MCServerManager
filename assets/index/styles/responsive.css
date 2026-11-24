@@ -1,0 +1,20 @@
+/* ---------- 响应式 ---------- */
+@media (max-width: 860px) {
+  #sidebar {
+    position: fixed; left: 0; top: 0; bottom: 0; z-index: 80;
+    transform: translateX(-105%); transition: transform .2s ease;
+    box-shadow: 0 0 46px rgba(0,0,0,.55);
+  }
+  #app.sidebar-open #sidebar { transform: none; }
+  #sidebar-mask {
+    display: none; position: fixed; inset: 0; z-index: 70;
+    background: rgba(0,0,0,.45);
+  }
+  #app.sidebar-open #sidebar-mask { display: block; }
+  .icon-btn { display: inline-flex; }
+  .form-grid { grid-template-columns: 1fr; }
+  .fld.span2 { grid-column: span 1; }
+  .method-grid { grid-template-columns: 1fr; }
+  .top-actions { width: 100%; }
+  .top-actions .btn { flex: 1; }
+}

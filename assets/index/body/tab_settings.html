@@ -1,0 +1,62 @@
+
+      <section id="tab-settings" class="panel">
+        <div class="panel-scroll">
+          <div class="card">
+            <h3 class="card-title">服务器设置</h3>
+            <div class="inline-msg" id="sv-msg"></div>
+            <div class="form-grid">
+              <label class="fld"><span>服务器名称</span><input id="sv-name" spellcheck="false"></label>
+              <label class="fld"><span>Java 路径</span>
+                <div class="fld-path">
+                  <input id="sv-java" spellcheck="false">
+                  <button class="btn" type="button" data-browse="sv-java" data-mode="file" data-title="选择 Java 可执行文件">浏览</button>
+                </div>
+              </label>
+              <label class="fld"><span>最小内存 (MB)</span><input id="sv-min" type="number" min="0"></label>
+              <label class="fld"><span>最大内存 (MB)</span><input id="sv-max" type="number" min="0"></label>
+              <label class="fld span2"><span>JVM 附加参数</span><input id="sv-jvm" spellcheck="false"></label>
+              <label class="fld span2"><span>备份目录</span>
+                <div class="fld-path">
+                  <input id="sv-backup" spellcheck="false">
+                  <button class="btn" type="button" data-browse="sv-backup" data-mode="dir" data-title="选择备份目录">浏览</button>
+                </div>
+              </label>
+              <label class="fld span2"><span>世界目录</span>
+                <div class="fld-path">
+                  <input id="sv-world" spellcheck="false">
+                  <button class="btn" type="button" data-browse="sv-world" data-mode="dir" data-title="选择世界目录">浏览</button>
+                </div>
+              </label>
+            </div>
+            <div class="form-actions">
+              <button class="btn btn-primary" id="sv-save">保存设置</button>
+            </div>
+          </div>
+          <div class="card">
+            <h3 class="card-title">服务器目录</h3>
+            <div class="form-grid">
+              <label class="fld span2"><span>当前工作目录</span><input id="sv-working" readonly spellcheck="false"></label>
+              <label class="fld span2"><span>目标目录</span>
+                <div class="fld-path">
+                  <input id="sv-location" spellcheck="false" placeholder="/任意/服务器目录">
+                  <button class="btn" type="button" data-browse="sv-location" data-mode="dir" data-title="选择目标目录（移动时可手动输入尚不存在的路径）">浏览</button>
+                </div>
+                <small>移动：由管理器移动整个目录，目标必须不存在；重新定位：你已手动搬迁文件，只更新注册路径。两者都要求服务器已停止。</small>
+              </label>
+            </div>
+            <div class="form-actions">
+              <button class="btn" id="sv-move">移动目录</button>
+              <button class="btn" id="sv-relocate">已手动搬迁，重新定位</button>
+            </div>
+          </div>
+          <div class="card danger-zone">
+            <h3 class="card-title">危险区域</h3>
+            <p class="dz-desc">仅移除管理不会改动任何文件；移除和删除都要求服务器已停止。删除磁盘文件会<b>永久删除整个工作目录</b>，不可恢复。</p>
+            <div class="btn-row">
+              <button class="btn" id="sv-remove">仅从管理器移除</button>
+              <button class="btn btn-danger" id="sv-delete">删除服务器及磁盘文件</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>

@@ -1,0 +1,38 @@
+
+<!-- 全局设置弹窗 -->
+<div class="modal-mask" id="modal-settings" style="display:none">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>全局设置</h3>
+      <button class="modal-x" data-close="modal-settings" title="关闭">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="inline-msg" id="set-msg"></div>
+      <label class="fld">
+        <span>默认服务器目录（仅新建和上传）</span>
+        <div class="fld-path">
+          <input id="set-folder" spellcheck="false">
+          <button class="btn" type="button" data-browse="set-folder" data-mode="dir" data-title="选择默认服务器目录">浏览</button>
+        </div>
+        <small id="set-folder-hint"></small>
+      </label>
+      <label class="fld">
+        <span>全局 Java 路径</span>
+        <div class="fld-path">
+          <input id="set-java" spellcheck="false">
+          <button class="btn" type="button" data-browse="set-java" data-mode="file" data-title="选择 Java 可执行文件">浏览</button>
+        </div>
+        <small id="set-java-hint"></small>
+      </label>
+      <label class="fld">
+        <span>Web 端口</span>
+        <input id="set-port" type="number" min="1" max="65535">
+        <small>修改端口需重启 web 服务后生效</small>
+      </label>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" data-close="modal-settings">取消</button>
+      <button class="btn btn-primary" id="set-save">保存</button>
+    </div>
+  </div>
+</div>

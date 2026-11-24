@@ -1,0 +1,32 @@
+/* ================= 全局状态 ================= */
+const STATE_TEXT = { STOPPED: '已停止', STARTING: '启动中', RUNNING: '运行中', STOPPING: '停止中', UNKNOWN: '状态未知' };
+const STATE_CLASS = { STOPPED: 'stopped', STARTING: 'starting', RUNNING: 'running', STOPPING: 'stopping', UNKNOWN: 'unknown' };
+const TAB_NAMES = ['overview', 'console', 'players', 'properties', 'backups', 'files', 'settings'];
+
+let servers = [];
+let current = -1;            // 当前选中的服务器下标（仅用于 DOM，不进入 HTTP 路径）
+let selectedServerId = null; // 当前选中的稳定 UUID，列表重排后据此恢复
+let currentTab = 'overview';
+let pollTimer = null;
+let modalDepth = 0;          // >0 时暂停列表轮询，避免打断输入
+let evtSource = null;
+let consoleStick = true;     // 控制台是否贴底自动滚动
+let propsLoadedFor = null;   // 配置编辑器已加载的服务器 UUID
+let propState = null;        // {exists, entries, order, dirty:Set, newKeys:Set}
+const propInputs = new Map();// key -> input 元素
+let backupsFor = null;       // 已加载备份列表的服务器 UUID
+let lastBackups = [];
+let filesPath = '';        // 文件页当前相对路径（'' 为根目录）
+let filesEntries = [];
+let fileEditing = null;    // 正在编辑的文件相对路径，null 表示未编辑
+let fileReadSerial = 0;    // 使切换服务器、目录或新读取前的旧响应失效
+let fileModalAction = null;// 文件弹窗当前动作 { serverId, basePath, title, label, value, onOk }
+let fileDragDepth = 0;     // 文件页拖拽进入/离开的嵌套计数
+let eulaContext = null;    // { id, name } 固定点击时的服务器
+let rconContext = null;    // { id, name } 固定点击时的服务器
+let rconPendingAction = 'start';
+let installerContext = null; // { id, name } 固定点击时的服务器
+let installerPendingAction = 'start';
+let installerTask = null;    // { id, timer, logShown, running, generation, polling }
+let wiz = null;              // 添加服务器向导状态
+let browseState = null;      // 路径浏览弹窗状态 { mode, path, parent, selected, onOk }

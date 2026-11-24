@@ -1,0 +1,26 @@
+    <div id="server-view">
+      <header id="topbar">
+        <button id="btn-menu" class="icon-btn" title="服务器列表">☰</button>
+        <div class="srv-title-wrap">
+          <div class="srv-title-line">
+            <h1 id="srv-name"></h1>
+            <span id="srv-badge" class="badge"></span>
+          </div>
+          <div class="srv-meta" id="srv-meta"></div>
+        </div>
+        <div class="top-actions">
+          <button class="btn btn-primary" data-action="start">启动</button>
+          <button class="btn btn-danger" data-action="stop">停止</button>
+          <button class="btn" data-action="restart">重启</button>
+        </div>
+      </header>
+
+      <nav id="tabs">
+        <button class="tab-btn active" data-tab="overview">概览</button>
+        <button class="tab-btn" data-tab="console">控制台</button>
+        <button class="tab-btn" data-tab="players">玩家</button>
+        <button class="tab-btn" data-tab="properties">配置</button>
+        <button class="tab-btn" data-tab="backups">备份</button>
+        <button class="tab-btn" data-tab="files">文件</button>
+        <button class="tab-btn" data-tab="settings">服务器设置</button>
+      </nav>

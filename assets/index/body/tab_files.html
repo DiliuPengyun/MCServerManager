@@ -1,0 +1,37 @@
+
+      <section id="tab-files" class="panel">
+        <div id="files-layout">
+          <div class="inline-msg" id="files-msg"></div>
+          <div id="files-list-wrap">
+            <div class="panel-head">
+              <h3>文件 <span class="files-path" id="files-path">/</span></h3>
+              <div class="btn-row">
+                <button class="btn" id="files-up">上级</button>
+                <button class="btn" id="files-refresh">刷新</button>
+              </div>
+            </div>
+            <div class="files-table-scroll">
+              <div class="table-wrap">
+                <table class="kv-table files-table"><tbody id="files-tbody"></tbody></table>
+              </div>
+            </div>
+            <div class="props-add">
+              <button class="btn" id="files-new-file">新建文件</button>
+              <button class="btn" id="files-new-dir">新建文件夹</button>
+              <button class="btn" id="files-upload">上传文件</button>
+              <input type="file" id="files-upload-input" multiple style="display:none">
+            </div>
+          </div>
+          <div id="files-editor" style="display:none">
+            <div class="panel-head">
+              <h3>编辑 <span class="files-path" id="files-edit-name"></span></h3>
+              <div class="btn-row">
+                <button class="btn btn-primary" id="files-save">保存</button>
+                <button class="btn" id="files-close">关闭</button>
+              </div>
+            </div>
+            <textarea id="files-text" spellcheck="false"></textarea>
+          </div>
+        </div>
+        <div id="files-drop-mask"><div class="drop-hint">松开鼠标，上传文件到当前目录</div></div>
+      </section>

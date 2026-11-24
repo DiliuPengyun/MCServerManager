@@ -1,11 +1,23 @@
 # 构建输出
 build/
+target/
 
 # Xmake 缓存
 .xmake/
 
 # 工具缓存
 .cache/
+
+# ZCode 本地会话与计划
+/.zcode/
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+
+# 测试证据
+/artifacts/
+/gui-latest/
 
 # OpenCode 运行时（保留配置文件）
 .opencode/node_modules/

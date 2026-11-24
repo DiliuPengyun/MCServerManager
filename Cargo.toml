@@ -1,0 +1,52 @@
+[package]
+name = "mc-server-manager"
+version = "0.3.0"
+edition = "2024"
+description = "轻量的 Linux Minecraft 服务器管理器"
+default-run = "MCServerManager"
+
+[lib]
+name = "mcsm"
+path = "src/lib.rs"
+
+[[bin]]
+name = "MCServerManager"
+path = "src/main.rs"
+
+[dependencies]
+async-stream = "0.3"
+axum = "0.8"
+bytes = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+clap = { version = "4", features = ["derive"] }
+crossterm = { version = "0.29", features = ["event-stream"] }
+directories = "6"
+fs2 = "0.4"
+futures-util = "0.3"
+http = "1"
+http-body-util = "0.1"
+libc = "0.2"
+parking_lot = "0.12"
+ratatui = "0.30"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+tokio-util = { version = "0.7", features = ["rt"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+walkdir = "2"
+zip = { version = "4", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
